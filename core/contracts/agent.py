@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Sequence, Type
 
-from .skills import ensure_skill_ids, ensure_skill_scopes
+from core.contracts.execution import (
+    DEFAULT_EXECUTION_CONFIG,
+    ExecutionConfig,
+    ensure_execution_config,
+)
+from core.contracts.skills import ensure_skill_ids, ensure_skill_scopes
 from core.registry import Register
 
-from .tools import ToolLike, ensure_tools
+from core.contracts.tools import ToolLike, ensure_tool_references
 
 
 @dataclass(frozen=True)
@@ -21,6 +26,7 @@ class Agent:
     always_on_skills: Sequence[str] = ()
     skills_dir: Optional[str] = None
     model: Optional[str] = None
+    execution: ExecutionConfig = field(default_factory=lambda: DEFAULT_EXECUTION_CONFIG)
 
 
 class AgentModule:
@@ -42,8 +48,11 @@ class AgentModule:
     tools: Sequence[ToolLike] = ()
     skill_scopes: Sequence[str] = ()
     always_on_skills: Sequence[str] = ()
+    include_core_tools: bool = True
+    core_toolsets: Sequence[str] = ()
     skills_dir: Optional[str] = None
     model: Optional[str] = None
+    execution: ExecutionConfig = DEFAULT_EXECUTION_CONFIG
 
 
 def define_agent(
@@ -54,19 +63,27 @@ def define_agent(
     tools: Optional[Sequence[ToolLike]] = None,
     skill_scopes: Optional[Sequence[str]] = None,
     always_on_skills: Optional[Sequence[str]] = None,
+    include_core_tools: bool = True,
+    core_toolsets: Optional[Sequence[str]] = None,
     skills_dir: Optional[str] = None,
     model: Optional[str] = None,
+    execution: Optional[ExecutionConfig] = None,
 ) -> Agent:
     normalized_scopes = _resolve_skill_scopes(skill_scopes=skill_scopes, skills_dir=skills_dir)
     return Agent(
         name=name,
         description=description,
         system_prompt=system_prompt,
-        tools=tuple(ensure_tools(tools)),
+        tools=ensure_tool_references(
+            tools,
+            include_core_tools=include_core_tools,
+            core_toolsets=core_toolsets,
+        ),
         skill_scopes=normalized_scopes,
         always_on_skills=ensure_skill_ids(always_on_skills),
         skills_dir=skills_dir,
         model=model,
+        execution=ensure_execution_config(execution),
     )
 
 
@@ -89,8 +106,11 @@ def agent_from_class(agent_cls: Type[AgentModule]) -> Agent:
         tools=getattr(agent_cls, "tools", ()),
         skill_scopes=getattr(agent_cls, "skill_scopes", ()),
         always_on_skills=getattr(agent_cls, "always_on_skills", ()),
+        include_core_tools=getattr(agent_cls, "include_core_tools", True),
+        core_toolsets=getattr(agent_cls, "core_toolsets", ()),
         skills_dir=getattr(agent_cls, "skills_dir", None),
         model=getattr(agent_cls, "model", None),
+        execution=getattr(agent_cls, "execution", DEFAULT_EXECUTION_CONFIG),
     )
 
 

@@ -8,8 +8,8 @@ from typing import Dict, List, Tuple
 from urllib.parse import parse_qs, quote_plus, urlparse, unquote
 from urllib.request import Request, urlopen
 
-from core.contracts.tools import current_progress, tool
-from core.policies.search_strategy import SearchPlan, build_search_plan, build_search_plan_detail
+from core.contracts.tools import ToolModule, register_tool_class
+from workspace.tools.web_search_strategy import SearchPlan, build_search_plan, build_search_plan_detail
 
 
 DEFAULT_TIMEOUT_SECONDS = 12
@@ -79,96 +79,98 @@ class _DuckDuckGoResultsParser(HTMLParser):
         self._capture_snippet = False
 
 
-@tool(
-    description="Search the public web for recent answers and return concise result snippets.",
-    category="public_web",
-    use_when=(
+@register_tool_class
+class SearchWebTool(ToolModule):
+    name = "search_web"
+    description = "Search the public web for recent answers and return concise result snippets."
+    category = "public_web"
+    use_when = (
         "The question depends on public information that may have changed.",
         "You need current events, company updates, prices, schedules, weather, scores, or other live information.",
-    ),
-    avoid_when=(
+    )
+    avoid_when = (
         "Internal guidance or direct reasoning already answers the question.",
-    ),
-    returns="Deduplicated web search results gathered from one or more query variants, with titles, URLs, and snippets.",
-    requires_current_data=True,
-    follow_up_tools=("fetch_web_page",),
-)
-def search_web(query: str, max_results: int = 5) -> dict:
-    progress = current_progress()
-    search_plan = build_search_plan(query)
-    progress.think(
-        "Checking recent sources",
-        detail=build_search_plan_detail(search_plan),
-        step_id="search_web",
     )
-    progress.debug(
-        "Searching the web.",
-        query=query,
-        effective_query=search_plan.effective_query,
-        queries_used=list(search_plan.queries),
-        max_results=max_results,
-        time_sensitive=search_plan.time_sensitive,
-    )
+    returns = "Deduplicated web search results gathered from one or more query variants, with titles, URLs, and snippets."
+    requires_current_data = True
+    follow_up_tools = ("fetch_web_page",)
 
-    query_runs = []
-    results = _run_search_queries(
-        search_plan=search_plan,
-        max_results=max_results,
-        query_runs=query_runs,
-        progress=progress,
-    )
+    def run(self, query: str, max_results: int = 5) -> dict:
+        search_plan = build_search_plan(query)
+        self.progress.think(
+            "Checking recent sources",
+            detail=build_search_plan_detail(search_plan),
+            step_id="search_web",
+        )
+        self.progress.debug(
+            "Searching the web.",
+            query=query,
+            effective_query=search_plan.effective_query,
+            queries_used=list(search_plan.queries),
+            max_results=max_results,
+            time_sensitive=search_plan.time_sensitive,
+        )
 
-    progress.think(
-        "Recent sources checked",
-        detail=_search_completion_detail(query_runs=query_runs, results=results),
-        step_id="search_web",
-        state="done",
-    )
-    progress.debug(
-        "Web search completed.",
-        matches=len(results),
-        effective_query=search_plan.effective_query,
-        queries_used=list(search_plan.queries),
-    )
-    return {
-        "query": query,
-        "effective_query": search_plan.effective_query,
-        "queries_used": list(search_plan.queries),
-        "query_runs": query_runs,
-        "temporal_context": {
-            "time_sensitive": search_plan.time_sensitive,
-            "current_date": search_plan.current_date,
-        },
-        "results": results,
-    }
+        query_runs = []
+        results = _run_search_queries(
+            search_plan=search_plan,
+            max_results=max_results,
+            query_runs=query_runs,
+            progress=self.progress,
+        )
+
+        self.progress.think(
+            "Recent sources checked",
+            detail=_search_completion_detail(query_runs=query_runs, results=results),
+            step_id="search_web",
+            state="done",
+        )
+        self.progress.debug(
+            "Web search completed.",
+            matches=len(results),
+            effective_query=search_plan.effective_query,
+            queries_used=list(search_plan.queries),
+        )
+        return {
+            "query": query,
+            "effective_query": search_plan.effective_query,
+            "queries_used": list(search_plan.queries),
+            "query_runs": query_runs,
+            "temporal_context": {
+                "time_sensitive": search_plan.time_sensitive,
+                "current_date": search_plan.current_date,
+            },
+            "results": results,
+        }
 
 
-@tool(
-    description="Fetch a web page and extract readable text for summarization.",
-    category="public_web",
-    use_when=(
+@register_tool_class
+class FetchWebPageTool(ToolModule):
+    name = "fetch_web_page"
+    description = "Fetch a web page and extract readable text for summarization."
+    category = "public_web"
+    use_when = (
         "Search snippets are not enough and you need exact details from a specific public page.",
-    ),
-    returns="Readable page content extracted from the selected URL.",
-)
-def fetch_web_page(url: str, max_chars: int = 5000) -> dict:
-    progress = current_progress()
-    progress.think(
-        "Reading the most relevant source",
-        detail=_fetch_page_thinking_detail(url),
-        step_id="fetch_web_page",
     )
-    progress.debug("Fetching web page.", url=url)
-    body = _http_get(url)
-    title, content = _extract_page_content(body, max_chars=max_chars)
-    progress.think(
-        "Source details gathered",
-        detail=_fetch_page_completed_detail(url),
-        step_id="fetch_web_page",
-        state="done",
-    )
-    progress.debug("Fetched web page.", title=title or "untitled", characters=len(content))
-    return {"url": url, "title": title, "content": content}
+    returns = "Readable page content extracted from the selected URL."
+
+    def run(self, url: str, max_chars: int = 5000) -> dict:
+        self.progress.think(
+            "Reading the most relevant source",
+            detail=_fetch_page_thinking_detail(url),
+            step_id="fetch_web_page",
+        )
+        self.progress.debug("Fetching web page.", url=url)
+        body = _http_get(url)
+        title, content = _extract_page_content(body, max_chars=max_chars)
+        self.progress.think(
+            "Source details gathered",
+            detail=_fetch_page_completed_detail(url),
+            step_id="fetch_web_page",
+            state="done",
+        )
+        self.progress.debug("Fetched web page.", title=title or "untitled", characters=len(content))
+        return {"url": url, "title": title, "content": content}
 
 
 def _http_get(url: str) -> str:
@@ -398,8 +400,8 @@ def _search_completion_detail(
 
 
 __all__ = [
-    "search_web",
-    "fetch_web_page",
+    "SearchWebTool",
+    "FetchWebPageTool",
     "_build_search_queries",
     "_build_effective_query",
     "_extract_page_content",

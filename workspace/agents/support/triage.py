@@ -13,9 +13,6 @@ class SupportTriage(AgentModule):
     )
     tools = (
         "get_current_utc_time",
-        "search_skills",
-        "list_skill_files",
-        "read_skill_file",
     )
     skill_scopes = ("support", "general.product")
     always_on_skills = ("support.persona", "support.policy")

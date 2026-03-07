@@ -108,3 +108,4 @@ def add_query(queries: list[str], value: str) -> None:
     if not normalized or normalized in queries:
         return
     queries.append(normalized)
+

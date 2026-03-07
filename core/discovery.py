@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Set, Tuple
 
 from core.contracts.agent import Agent, AgentModule
 from core.contracts.skills import SkillDefinition, register_skill
-from core.contracts.tools import ToolDefinition
+from core.contracts.tools import ToolDefinition, ensure_tools
 from core.registry import Register
 from core.skills.parser import parse_skill_file
 
@@ -28,7 +28,7 @@ def _slugify(value: str) -> str:
 
 
 def _agent_fingerprint(definition: Agent) -> str:
-    tool_markers = ",".join(sorted(_tool_fingerprint(tool) for tool in definition.tools))
+    tool_markers = ",".join(sorted(_tool_fingerprint(tool) for tool in ensure_tools(definition.tools)))
     return "|".join(
         [
             definition.name,
@@ -168,8 +168,24 @@ class DiscoveryService:
 
     def _load_tool_modules(self) -> None:
         Register.clear(ToolDefinition)
+        self._load_builtin_tool_modules()
         for module_name, _ in self._namespace_modules("tools"):
             self._load_module(module_name)
+
+    def _load_builtin_tool_modules(self) -> None:
+        package_name = "core.builtin_tools"
+        try:
+            package = self._load_module(package_name)
+        except ModuleNotFoundError:
+            return
+
+        package_path = getattr(package, "__path__", None)
+        if package_path is None:
+            return
+
+        prefix = "{pkg}.".format(pkg=package_name)
+        for module_info in pkgutil.walk_packages(package_path, prefix=prefix):
+            self._load_module(module_info.name)
 
     def _namespace_modules(self, component: str) -> List[Tuple[str, str]]:
         component_root = self.workspace_root / component

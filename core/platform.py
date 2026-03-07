@@ -23,6 +23,7 @@ class AgentPlatform:
         self.refresh()
 
     def refresh(self) -> None:
+        self.discovery.discover_skills()
         discovered = self.discovery.discover_agents()
         if not discovered:
             raise RuntimeError(
@@ -158,4 +159,3 @@ class AgentPlatform:
             session_id=session_id,
         )
         return resolved_agent, active_session_id, stream
-

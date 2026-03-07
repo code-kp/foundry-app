@@ -25,7 +25,6 @@ from core.event_messages import (
     build_error_message,
     build_run_completed_message,
     build_run_started_message,
-    build_skill_context_message,
     build_tool_completed_message,
     build_tool_selection_message,
     build_tool_started_message,
@@ -39,6 +38,12 @@ from core.progress import (
     reset_progress_stream,
 )
 from core.registry import Register
+from core.skill_resolver import (
+    ResolvedSkillContext,
+    SkillResolver,
+    describe_resolved_skill_context,
+    serialize_resolved_skills,
+)
 from core.skill_store import SkillChunk, SkillStore
 
 
@@ -66,11 +71,12 @@ class AgentRuntime:
             tool.name: (tool.description or "")
             for tool in self.definition.tools
         }
-        self._selected_chunks: contextvars.ContextVar[List[SkillChunk]] = contextvars.ContextVar(
-            "selected_chunks_{agent_id}".format(agent_id=record.agent_id.replace(".", "_")),
-            default=[],
+        self._resolved_skills: contextvars.ContextVar[ResolvedSkillContext] = contextvars.ContextVar(
+            "resolved_skills_{agent_id}".format(agent_id=record.agent_id.replace(".", "_")),
+            default=ResolvedSkillContext(),
         )
-        self.skill_store = self._load_skill_store(self.definition.skills_dir)
+        self.skill_store = self._load_skill_store()
+        self.skill_resolver = SkillResolver(self.skill_store)
         self._session_service = InMemorySessionService()
         self._session_keys = set()
         self.agent = self._build_adk_agent()
@@ -94,25 +100,8 @@ class AgentRuntime:
             session_service=self._session_service,
         )
 
-    def _load_skill_store(self, skills_dir: Optional[str]) -> Optional[SkillStore]:
-        if not skills_dir:
-            return None
-        directory = Path(skills_dir)
-        if not directory.is_absolute():
-            candidates = []
-            if directory.parts and directory.parts[0] == "skills":
-                candidates.append(self.record.project_root / directory)
-            else:
-                candidates.append(self.record.project_root / "skills" / directory)
-                candidates.append(self.record.project_root / directory)
-
-            for candidate in candidates:
-                if candidate.exists():
-                    directory = candidate
-                    break
-            else:
-                directory = candidates[0]
-        return SkillStore(directory)
+    def _load_skill_store(self) -> SkillStore:
+        return SkillStore(self.record.project_root / "skills")
 
     def _build_adk_agent(self) -> LlmAgent:
         instruction = "\n\n".join(
@@ -270,15 +259,15 @@ class AgentRuntime:
             break
 
     def _before_model_callback(self, callback_context: Any, llm_request: Any) -> Any:
-        selected_chunks = self._selected_chunks.get()
-        if not selected_chunks:
+        resolved_context = self._resolved_skills.get()
+        if resolved_context.is_empty:
             return None
 
         config = getattr(llm_request, "config", None)
         if config is None:
             return None
 
-        skill_prompt = self._format_skill_context(selected_chunks)
+        skill_prompt = self._format_skill_context(resolved_context)
         if not skill_prompt:
             return None
 
@@ -301,16 +290,40 @@ class AgentRuntime:
             config.system_instruction = system_instruction
         return None
 
-    def _format_skill_context(self, chunks: List[SkillChunk]) -> str:
-        if not chunks:
+    def _format_skill_context(self, context: ResolvedSkillContext) -> str:
+        if context.is_empty:
             return ""
         lines = [
-            "Relevant skill excerpts for this turn:",
-            "Use this context only when relevant to the user question.",
+            "Relevant skill context for this turn:",
+            "Use these summaries and excerpts only when they materially help answer the user.",
         ]
-        for chunk in chunks:
-            lines.append("[{label}]".format(label=chunk.label))
-            lines.append(chunk.text)
+        if context.always_on_skills:
+            lines.append("Always-on skills:")
+            for skill in context.always_on_skills:
+                lines.append(
+                    "- [{skill_id}] ({skill_type}) {title}: {summary}".format(
+                        skill_id=skill.id,
+                        skill_type=skill.skill_type,
+                        title=skill.title,
+                        summary=skill.summary,
+                    )
+                )
+        if context.selected_skills:
+            lines.append("Retrieved skills:")
+            for skill in context.selected_skills:
+                lines.append(
+                    "- [{skill_id}] ({skill_type}) {title}: {summary}".format(
+                        skill_id=skill.id,
+                        skill_type=skill.skill_type,
+                        title=skill.title,
+                        summary=skill.summary,
+                    )
+                )
+        if context.chunks:
+            lines.append("Detailed excerpts:")
+            for chunk in context.chunks:
+                lines.append("[{label}]".format(label=chunk.label))
+                lines.append(chunk.text)
         return "\n\n".join(lines)
 
     async def ensure_session(self, user_id: str, session_id: str) -> None:
@@ -346,8 +359,8 @@ class AgentRuntime:
     ) -> None:
         stream_token = bind_progress_stream(stream)
         assistant_buffer = ""
-        selected_token: Optional[contextvars.Token] = None
-        selected_chunks: List[SkillChunk] = []
+        resolved_token: Optional[contextvars.Token] = None
+        resolved_context = ResolvedSkillContext()
 
         try:
             await self.ensure_session(user_id=user_id, session_id=session_id)
@@ -360,20 +373,22 @@ class AgentRuntime:
                     "message": build_run_started_message(self.definition.name),
                 },
             )
-            selected_chunks = await asyncio.to_thread(self._select_chunks, message)
-            selected_token = self._selected_chunks.set(selected_chunks)
+            resolved_context = await asyncio.to_thread(self._resolve_skills, message)
+            resolved_token = self._resolved_skills.set(resolved_context)
             await emit_progress(
                 "skill_context_selected",
                 agent_id=self.record.agent_id,
+                skills=serialize_resolved_skills(resolved_context),
                 chunks=[
                     {
+                        "skill_id": chunk.skill_id,
                         "source": chunk.source,
                         "heading": chunk.heading,
                         "preview": chunk.text[:220],
                     }
-                    for chunk in selected_chunks
+                    for chunk in resolved_context.chunks
                 ],
-                message=build_skill_context_message(selected_chunks),
+                message=describe_resolved_skill_context(resolved_context),
             )
 
             if not os.getenv("GOOGLE_API_KEY"):
@@ -420,7 +435,7 @@ class AgentRuntime:
                                 tool_name=call.name,
                                 tool_args=call.args or {},
                                 user_message=message,
-                                selected_chunks=selected_chunks,
+                                selected_chunks=list(resolved_context.chunks),
                                 model_hint=text,
                             )
                             await stream.emit(
@@ -519,15 +534,17 @@ class AgentRuntime:
                 assistant_text="" if assistant_buffer.strip() else message_text,
             )
         finally:
-            if selected_token is not None:
-                self._selected_chunks.reset(selected_token)
+            if resolved_token is not None:
+                self._resolved_skills.reset(resolved_token)
             reset_progress_stream(stream_token)
             await stream.close()
 
-    def _select_chunks(self, query: str) -> List[SkillChunk]:
-        if self.skill_store is None:
-            return []
-        return self.skill_store.select_relevant_chunks(query=query)
+    def _resolve_skills(self, query: str) -> ResolvedSkillContext:
+        return self.skill_resolver.resolve(
+            query=query,
+            skill_scopes=self.definition.skill_scopes,
+            always_on_skill_ids=self.definition.always_on_skills,
+        )
 
     def _extract_text(self, event: Any) -> str:
         content = getattr(event, "content", None)

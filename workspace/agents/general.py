@@ -17,4 +17,5 @@ class GeneralAssistant(AgentModule):
         "list_skill_files",
         "read_skill_file",
     )
-    skills_dir = "general"
+    skill_scopes = ("general",)
+    always_on_skills = ("general.persona",)

@@ -10,7 +10,9 @@ Rules:
 
 - Agent ids come from the directory hierarchy under `agents/`
 - Tool modules are loaded before agent modules, so agents can reference tools by name
-- Skills are shared content under `skills/`; agents can point `skills_dir` at a subdirectory like `general` or `support`
+- Skill ids come from the directory hierarchy under `skills/`
+- Skill files should have frontmatter metadata (`title`, `type`, `summary`, `tags`, `triggers`, `mode`, `priority`)
+- Agents select skills with `skill_scopes` and `always_on_skills`, not a single `skills_dir`
 
 Example:
 
@@ -24,5 +26,6 @@ class MyAgent(AgentModule):
     description = "What it does"
     system_prompt = "How it should behave"
     tools = ("get_current_utc_time", "search_skills")
-    skills_dir = "general"
+    skill_scopes = ("general",)
+    always_on_skills = ("general.persona",)
 ```

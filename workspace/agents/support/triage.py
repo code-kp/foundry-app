@@ -17,4 +17,5 @@ class SupportTriage(AgentModule):
         "list_skill_files",
         "read_skill_file",
     )
-    skills_dir = "support"
+    skill_scopes = ("support", "general.product")
+    always_on_skills = ("support.persona", "support.policy")

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import importlib
-import inspect
 import hashlib
+import inspect
 import pkgutil
 import re
 import sys
@@ -11,8 +11,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Set, Tuple
 
 from core.interfaces.agent import Agent, AgentModule
+from core.interfaces.skills import SkillDefinition, register_skill
 from core.interfaces.tools import ToolDefinition
 from core.registry import Register
+from core.skill_parser import parse_skill_file
 
 
 SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -32,6 +34,8 @@ def _agent_fingerprint(definition: Agent) -> str:
             definition.name,
             definition.description,
             definition.system_prompt,
+            ",".join(sorted(str(item) for item in definition.skill_scopes)),
+            ",".join(sorted(str(item) for item in definition.always_on_skills)),
             definition.skills_dir or "",
             definition.model or "",
             tool_markers,
@@ -59,6 +63,14 @@ class DiscoveredAgent:
     project_name: str
     project_root: Path
     definition: Agent
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class DiscoveredSkill:
+    skill_id: str
+    source: str
+    definition: SkillDefinition
     fingerprint: str
 
 
@@ -106,6 +118,30 @@ class DiscoveryService:
                     fingerprint=_agent_fingerprint(definition),
                 )
 
+        return discovered
+
+    def discover_skills(self) -> Dict[str, DiscoveredSkill]:
+        skills_root = self.workspace_root / "skills"
+        Register.clear(SkillDefinition)
+        if not skills_root.exists():
+            return {}
+
+        discovered: Dict[str, DiscoveredSkill] = {}
+        for path in sorted(skills_root.rglob("*.md")):
+            definition = parse_skill_file(path, skills_root)
+            if definition.id in discovered:
+                raise RuntimeError(
+                    "Duplicate skill id discovered during runtime discovery: {skill_id}".format(
+                        skill_id=definition.id
+                    )
+                )
+            register_skill(definition)
+            discovered[definition.id] = DiscoveredSkill(
+                skill_id=definition.id,
+                source=definition.source,
+                definition=definition,
+                fingerprint=_skill_fingerprint(definition),
+            )
         return discovered
 
     def _prepare_import_path(self) -> None:
@@ -182,3 +218,22 @@ class DiscoveryService:
             add_candidate(getattr(value, "__agent_definition__", None))
 
         return collected
+
+
+def _skill_fingerprint(definition: SkillDefinition) -> str:
+    digest = hashlib.sha1(definition.body.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return "|".join(
+        [
+            definition.id,
+            definition.source,
+            definition.title,
+            definition.skill_type,
+            definition.summary,
+            definition.mode,
+            str(definition.priority),
+            ",".join(definition.tags),
+            ",".join(definition.triggers),
+            ",".join(definition.requires_tools),
+            digest,
+        ]
+    )

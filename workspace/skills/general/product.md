@@ -1,3 +1,13 @@
+---
+title: Product Knowledge
+type: knowledge
+summary: Onboarding guidance and refund policy for general product questions.
+tags: [product, onboarding, refund, billing]
+triggers: [onboarding, get started, refund, refund policy, billing]
+mode: auto
+priority: 70
+---
+
 # Product
 
 ## Onboarding

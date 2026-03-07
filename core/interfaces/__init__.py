@@ -1,6 +1,7 @@
 """Interfaces for defining agents and tools."""
 
 from .agent import Agent, AgentModule, define_agent, register_agent, register_agent_class
+from .skills import SkillDefinition
 from .tools import (
     ToolDefinition,
     ToolLike,
@@ -14,6 +15,7 @@ from .tools import (
 __all__ = [
     "Agent",
     "AgentModule",
+    "SkillDefinition",
     "ToolDefinition",
     "ToolLike",
     "define_agent",

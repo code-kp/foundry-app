@@ -17,25 +17,32 @@ def search_skills(query: str, max_results: int = 3) -> dict:
     return {"query": query, "results": results}
 
 
-@tool(description="List indexed markdown skill files.")
+@tool(description="List discovered skills with their ids, types, and summaries.")
 def list_skill_files() -> dict:
     progress = current_progress()
-    files = SKILL_STORE.describe()
-    progress.comment("Listed indexed skill files.", files=len(files))
-    return {"skills": files}
+    skills = SKILL_STORE.describe()
+    progress.comment("Listed discovered skills.", skills=len(skills))
+    return {"skills": skills}
 
 
-@tool(description="Read a markdown skill file by relative path.")
+@tool(description="Read a markdown skill by skill id or relative file path.")
 def read_skill_file(file_name: str) -> dict:
     progress = current_progress()
-    root = SKILL_STORE.skills_dir.resolve()
-    path = (SKILL_STORE.skills_dir / file_name).resolve()
-    if root not in path.parents and path != root:
-        raise ValueError("Requested file is outside the configured skill directory.")
-    if not path.exists() or not path.is_file():
-        raise FileNotFoundError("Skill file not found: {name}".format(name=file_name))
-    progress.comment("Reading skill file.", file=file_name)
-    return {"file": file_name, "content": path.read_text(encoding="utf-8")}
+    skill = SKILL_STORE.get_skill(file_name) or SKILL_STORE.get_skill_by_source(file_name)
+    if skill is None:
+        raise FileNotFoundError("Skill not found: {name}".format(name=file_name))
+    progress.comment("Reading skill file.", file=skill.source, skill_id=skill.id)
+    return {
+        "skill": {
+            "id": skill.id,
+            "title": skill.title,
+            "type": skill.skill_type,
+            "summary": skill.summary,
+            "mode": skill.mode,
+            "source": skill.source,
+        },
+        "content": skill.body,
+    }
 
 
 __all__ = ["search_skills", "list_skill_files", "read_skill_file"]

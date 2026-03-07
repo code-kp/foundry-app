@@ -5,15 +5,19 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional, Sequence
+
+from core.interfaces.skills import SkillDefinition
+from core.skill_parser import parse_skill_file
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]{2,}", re.IGNORECASE)
 
 
-@dataclass
+@dataclass(frozen=True)
 class SkillChunk:
     chunk_id: str
+    skill_id: str
     source: str
     heading: str
     text: str
@@ -21,19 +25,21 @@ class SkillChunk:
 
     @property
     def label(self) -> str:
-        return "{source} :: {heading}".format(source=self.source, heading=self.heading)
+        return "{skill_id} :: {heading}".format(skill_id=self.skill_id, heading=self.heading)
 
 
 class SkillStore:
     def __init__(self, skills_dir: Path, max_chunk_chars: int = 900) -> None:
         self.skills_dir = skills_dir
         self.max_chunk_chars = max_chunk_chars
+        self._skills: Dict[str, SkillDefinition] = {}
         self._chunks: List[SkillChunk] = []
         self._doc_frequency: Counter[str] = Counter()
         self._index_signature: tuple[tuple[str, int], ...] = ()
 
     def refresh(self) -> None:
         if not self.skills_dir.exists():
+            self._skills = {}
             self._chunks = []
             self._doc_frequency = Counter()
             self._index_signature = ()
@@ -47,12 +53,16 @@ class SkillStore:
         if signature == self._index_signature:
             return
 
+        skills: Dict[str, SkillDefinition] = {}
         chunks: List[SkillChunk] = []
         for path in files:
-            relative_path = str(path.relative_to(self.skills_dir))
-            content = path.read_text(encoding="utf-8")
-            chunks.extend(self._chunk_markdown(relative_path, content))
+            definition = parse_skill_file(path, self.skills_dir)
+            if definition.id in skills:
+                raise ValueError("Duplicate skill id discovered: {skill_id}".format(skill_id=definition.id))
+            skills[definition.id] = definition
+            chunks.extend(self._chunk_skill(definition))
 
+        self._skills = skills
         self._chunks = chunks
         self._doc_frequency = Counter()
         for chunk in chunks:
@@ -60,15 +70,34 @@ class SkillStore:
                 self._doc_frequency[token] += 1
         self._index_signature = signature
 
+    def list_skills(self) -> List[SkillDefinition]:
+        self.refresh()
+        return [self._skills[key] for key in sorted(self._skills.keys())]
+
+    def get_skill(self, skill_id: str) -> Optional[SkillDefinition]:
+        self.refresh()
+        return self._skills.get(skill_id.strip())
+
+    def get_skill_by_source(self, source: str) -> Optional[SkillDefinition]:
+        self.refresh()
+        normalized = str(source or "").strip().replace("\\", "/")
+        for skill in self._skills.values():
+            if skill.source == normalized:
+                return skill
+        return None
+
     def describe(self) -> List[Dict[str, object]]:
         self.refresh()
-        grouped: Dict[str, int] = {}
-        for chunk in self._chunks:
-            grouped.setdefault(chunk.source, 0)
-            grouped[chunk.source] += 1
         return [
-            {"file": file_name, "chunks": count}
-            for file_name, count in sorted(grouped.items())
+            {
+                "id": skill.id,
+                "title": skill.title,
+                "type": skill.skill_type,
+                "mode": skill.mode,
+                "summary": skill.summary,
+                "source": skill.source,
+            }
+            for skill in self.list_skills()
         ]
 
     def select_relevant_chunks(
@@ -76,18 +105,26 @@ class SkillStore:
         query: str,
         max_chunks: int = 4,
         max_chars: int = 2200,
+        skill_ids: Optional[Sequence[str]] = None,
     ) -> List[SkillChunk]:
         self.refresh()
         query_tokens = self._tokenize(query)
+        selected_ids = {value.strip() for value in list(skill_ids or []) if str(value or "").strip()}
+        chunk_pool = [
+            chunk
+            for chunk in self._chunks
+            if not selected_ids or chunk.skill_id in selected_ids
+        ]
+
         if not query_tokens:
-            return self._chunks[:max_chunks]
+            return self._take_first_chunks(chunk_pool, max_chunks=max_chunks, max_chars=max_chars)
 
         scored: List[tuple[float, SkillChunk]] = []
         query_counter = Counter(query_tokens)
         query_text = query.lower()
-        corpus_size = max(len(self._chunks), 1)
+        corpus_size = max(len(chunk_pool), 1)
 
-        for chunk in self._chunks:
+        for chunk in chunk_pool:
             chunk_counter = Counter(chunk.tokens)
             overlap_score = 0.0
             for token, query_count in query_counter.items():
@@ -105,29 +142,24 @@ class SkillStore:
                 scored.append((score, chunk))
 
         scored.sort(key=lambda item: item[0], reverse=True)
-        selected: List[SkillChunk] = []
-        total_chars = 0
-        seen_ids = set()
+        return self._take_scored_chunks(scored, max_chunks=max_chunks, max_chars=max_chars)
 
-        for _, chunk in scored:
-            if chunk.chunk_id in seen_ids:
-                continue
-            projected = total_chars + len(chunk.text)
-            if selected and projected > max_chars:
-                continue
-            selected.append(chunk)
-            seen_ids.add(chunk.chunk_id)
-            total_chars = projected
-            if len(selected) >= max_chunks:
-                break
-
-        return selected
-
-    def search(self, query: str, max_results: int = 3) -> List[Dict[str, str]]:
-        chunks = self.select_relevant_chunks(query=query, max_chunks=max_results, max_chars=3000)
+    def search(
+        self,
+        query: str,
+        max_results: int = 3,
+        skill_ids: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, str]]:
+        chunks = self.select_relevant_chunks(
+            query=query,
+            max_chunks=max_results,
+            max_chars=3000,
+            skill_ids=skill_ids,
+        )
         return [
             {
                 "chunk_id": chunk.chunk_id,
+                "skill_id": chunk.skill_id,
                 "source": chunk.source,
                 "heading": chunk.heading,
                 "text": chunk.text,
@@ -135,8 +167,8 @@ class SkillStore:
             for chunk in chunks
         ]
 
-    def _chunk_markdown(self, source: str, content: str) -> List[SkillChunk]:
-        lines = content.splitlines()
+    def _chunk_skill(self, definition: SkillDefinition) -> List[SkillChunk]:
+        lines = definition.body.splitlines()
         heading_stack: List[str] = []
         buffer: List[str] = []
         chunks: List[SkillChunk] = []
@@ -152,8 +184,10 @@ class SkillStore:
             for piece in self._split_large_block(text):
                 tokens = tuple(
                     self._tokenize(
-                        "{source} {heading} {piece}".format(
-                            source=source,
+                        "{source} {title} {summary} {heading} {piece}".format(
+                            source=definition.source,
+                            title=definition.title,
+                            summary=definition.summary,
                             heading=heading,
                             piece=piece,
                         )
@@ -162,8 +196,9 @@ class SkillStore:
                 chunk_index += 1
                 chunks.append(
                     SkillChunk(
-                        chunk_id="{source}:{idx}".format(source=source, idx=chunk_index),
-                        source=source,
+                        chunk_id="{skill_id}:{idx}".format(skill_id=definition.id, idx=chunk_index),
+                        skill_id=definition.id,
+                        source=definition.source,
                         heading=heading,
                         text=piece,
                         tokens=tokens,
@@ -188,6 +223,54 @@ class SkillStore:
 
         flush()
         return chunks
+
+    def _take_first_chunks(
+        self,
+        chunks: Sequence[SkillChunk],
+        *,
+        max_chunks: int,
+        max_chars: int,
+    ) -> List[SkillChunk]:
+        selected: List[SkillChunk] = []
+        total_chars = 0
+        seen_ids = set()
+        for chunk in chunks:
+            if chunk.chunk_id in seen_ids:
+                continue
+            projected = total_chars + len(chunk.text)
+            if selected and projected > max_chars:
+                continue
+            selected.append(chunk)
+            seen_ids.add(chunk.chunk_id)
+            total_chars = projected
+            if len(selected) >= max_chunks:
+                break
+        return selected
+
+    def _take_scored_chunks(
+        self,
+        scored: Sequence[tuple[float, SkillChunk]],
+        *,
+        max_chunks: int,
+        max_chars: int,
+    ) -> List[SkillChunk]:
+        selected: List[SkillChunk] = []
+        total_chars = 0
+        seen_ids = set()
+
+        for _, chunk in scored:
+            if chunk.chunk_id in seen_ids:
+                continue
+            projected = total_chars + len(chunk.text)
+            if selected and projected > max_chars:
+                continue
+            selected.append(chunk)
+            seen_ids.add(chunk.chunk_id)
+            total_chars = projected
+            if len(selected) >= max_chunks:
+                break
+
+        return selected
 
     def _split_large_block(self, text: str) -> Iterable[str]:
         if len(text) <= self.max_chunk_chars:

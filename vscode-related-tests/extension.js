@@ -1,11 +1,12 @@
 const childProcess = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const vscode = require("vscode");
 
 const CONTROLLER_ID = "relatedTests";
 const CONTROLLER_LABEL = "Related Tests";
-const DEFAULT_SOURCE_ROOTS = ["api.py", "server.py", "core", "workspace"];
+const COVERAGE_DETAILS = new WeakMap();
 
 function activate(context) {
   const workspaceFolder = getWorkspaceFolder();
@@ -19,7 +20,6 @@ function activate(context) {
     workspaceFolder,
     metadataScriptPath: path.join(context.extensionPath, "python", "related_tests_metadata.py"),
     scanData: null,
-    scanPromise: null,
   };
 
   controller.resolveHandler = async (item) => {
@@ -30,11 +30,6 @@ function activate(context) {
 
     const descriptor = decodeId(item.id);
     if (!descriptor) {
-      return;
-    }
-
-    if (descriptor.type === "group") {
-      await resolveGroup(state, item, descriptor.group);
       return;
     }
 
@@ -49,6 +44,22 @@ function activate(context) {
     (request, token) => runRelatedTests(state, request, token),
     true,
   );
+  controller.createRunProfile(
+    "Debug",
+    vscode.TestRunProfileKind.Debug,
+    (request, token) => debugRelatedTests(state, request, token),
+    true,
+  );
+  const coverageProfile = controller.createRunProfile(
+    "Coverage",
+    vscode.TestRunProfileKind.Coverage,
+    (request, token) => runRelatedCoverage(state, request, token),
+    true,
+  );
+  coverageProfile.loadDetailedCoverage = async (run, fileCoverage) => {
+    const detailsByFile = COVERAGE_DETAILS.get(run);
+    return detailsByFile?.get(fileCoverage) || [];
+  };
 
   context.subscriptions.push(
     controller,
@@ -59,6 +70,9 @@ function activate(context) {
     vscode.commands.registerCommand("relatedTests.refreshItem", async (item) => {
       await refreshSelectedItem(state, item);
     }),
+    vscode.window.onDidChangeActiveTextEditor(() => {
+      void refreshController(state);
+    }),
     vscode.workspace.onDidSaveTextDocument((document) => {
       if (document.uri.scheme !== "file") {
         return;
@@ -67,24 +81,43 @@ function activate(context) {
         return;
       }
       invalidateScan(state);
+      if (getActiveSourcePath(state)) {
+        void refreshController(state);
+      }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration("relatedTests")) {
         invalidateScan(state);
+        void refreshController(state);
       }
     }),
   );
 
-  showStatusItem(state, "Loading related tests...");
   void refreshController(state);
 }
 
 async function refreshController(state) {
   try {
-    const scanData = await loadScan(state, true);
-    replaceRootItems(state, scanData);
+    const activeSourcePath = getActiveSourcePath(state);
+    if (!activeSourcePath) {
+      invalidateScan(state);
+      clearCollection(state.controller.items);
+      return;
+    }
+
+    const metadata = await inspectSource(state, activeSourcePath);
+    replaceRootItems(state, hasMetadata(metadata) ? [metadata] : []);
+    if (!hasMetadata(metadata)) {
+      clearCollection(state.controller.items);
+      return;
+    }
+
+    const sourceItem = state.controller.items.get(encodeId({ type: "source", source: metadata.source }));
+    if (sourceItem) {
+      await resolveSource(state, sourceItem, metadata.source);
+    }
   } catch (error) {
-    showStatusItem(state, "Related Tests unavailable", errorMessage(error));
+    clearCollection(state.controller.items);
     vscode.window.showErrorMessage(`Related Tests failed to load: ${errorMessage(error)}`);
   }
 }
@@ -110,13 +143,11 @@ async function refreshSelectedItem(state, item) {
     const metadata = await inspectSource(state, descriptor.source);
     if (!hasMetadata(metadata)) {
       removeSourceItem(state, descriptor.source);
-      ensureNonEmptyState(state);
       return;
     }
 
     const sourceItem = getOrCreateSourceItem(state, metadata);
     await resolveSource(state, sourceItem, descriptor.source);
-    updateGroupDescription(state, groupForSource(descriptor.source));
   } catch (error) {
     item.error = errorMessage(error);
     vscode.window.showErrorMessage(`Related Tests failed to refresh ${descriptor.source}: ${errorMessage(error)}`);
@@ -125,36 +156,15 @@ async function refreshSelectedItem(state, item) {
 
 function replaceRootItems(state, scanData) {
   clearCollection(state.controller.items);
-  if (!scanData.length) {
-    showStatusItem(state, "No related tests found");
-    return;
+  for (const metadata of scanData) {
+    state.controller.items.add(createSourceItem(state, metadata));
   }
-
-  for (const groupName of groupNames(scanData)) {
-    state.controller.items.add(createGroupItem(state, groupName, scanData));
-  }
-}
-
-async function resolveGroup(state, groupItem, groupName) {
-  const scanData = await loadScan(state);
-  clearCollection(groupItem.children);
-
-  const groupItems = scanData
-    .filter((item) => groupForSource(item.source) === groupName)
-    .sort((left, right) => left.source.localeCompare(right.source));
-
-  for (const metadata of groupItems) {
-    groupItem.children.add(createSourceItem(state, metadata));
-  }
-
-  updateGroupDescription(state, groupName);
 }
 
 async function resolveSource(state, sourceItem, sourcePath) {
   const metadata = await inspectSource(state, sourcePath);
   if (!hasMetadata(metadata)) {
     removeSourceItem(state, sourcePath);
-    ensureNonEmptyState(state);
     return;
   }
 
@@ -176,7 +186,6 @@ async function runRelatedTests(state, request, token) {
   const run = state.controller.createTestRun(request);
   try {
     const plan = await buildExecutionPlan(state, request);
-    markStarted(run, plan.groupItems.values());
     markStarted(
       run,
       Array.from(plan.sourceEntries.values())
@@ -207,24 +216,122 @@ async function runRelatedTests(state, request, token) {
     }
 
     finalizeSourceResults(run, plan.sourceEntries);
-    finalizeGroupResults(run, plan.groupItems, plan.sourceEntries);
   } catch (error) {
-    const rootStatus = currentStatusItem(state);
-    if (rootStatus) {
-      run.errored(rootStatus, buildFailureMessage("related tests", errorMessage(error)));
-    }
     vscode.window.showErrorMessage(`Related Tests failed: ${errorMessage(error)}`);
   } finally {
     run.end();
   }
 }
 
+async function debugRelatedTests(state, request, token) {
+  const plan = await buildExecutionPlan(state, request);
+  const testPaths = Array.from(plan.testTargets.keys());
+  if (!testPaths.length || token.isCancellationRequested) {
+    return;
+  }
+
+  const configuration = getConfiguration();
+  const started = await vscode.debug.startDebugging(state.workspaceFolder, {
+    name: "Related Tests Debug",
+    type: "debugpy",
+    request: "launch",
+    module: "pytest",
+    args: [...configuration.pytestArgs, ...testPaths],
+    cwd: state.workspaceFolder.uri.fsPath,
+    console: "integratedTerminal",
+    justMyCode: false,
+    python: configuration.pythonCommand,
+    env: processEnv(),
+  });
+
+  if (!started) {
+    vscode.window.showErrorMessage("Related Tests failed: Could not start debug session.");
+  }
+}
+
+async function runRelatedCoverage(state, request, token) {
+  const run = state.controller.createTestRun(request);
+  const detailsByFile = new Map();
+  COVERAGE_DETAILS.set(run, detailsByFile);
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "related-tests-coverage-"));
+  const coverageDataFile = path.join(tempDir, ".coverage");
+  const coverageJsonFile = path.join(tempDir, "coverage.json");
+
+  void run.onDidDispose?.(() => {
+    COVERAGE_DETAILS.delete(run);
+    void fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  try {
+    const plan = await buildExecutionPlan(state, request);
+    markStarted(
+      run,
+      Array.from(plan.sourceEntries.values())
+        .filter((entry) => entry.finalize)
+        .map((entry) => entry.item),
+    );
+    markStarted(run, collectChildItems(plan.testTargets));
+
+    let appendCoverage = false;
+    for (const [testPath, target] of plan.testTargets.entries()) {
+      if (token.isCancellationRequested) {
+        markSkipped(run, remainingTargets(plan.testTargets, testPath));
+        break;
+      }
+
+      const startedAt = Date.now();
+      const outcome = await runPytestWithCoverageFile(
+        state,
+        run,
+        testPath,
+        token,
+        coverageDataFile,
+        appendCoverage,
+      );
+      appendCoverage = appendCoverage || outcome.exitCode === 0 || outcome.output.length > 0;
+      const duration = Date.now() - startedAt;
+      const message = buildFailureMessage(testPath, outcome.output);
+
+      for (const childItem of target.childItems) {
+        childItem.relatedExitCode = outcome.exitCode;
+        if (outcome.exitCode === 0) {
+          run.passed(childItem, duration);
+        } else {
+          run.failed(childItem, message, duration);
+        }
+      }
+    }
+
+    finalizeSourceResults(run, plan.sourceEntries);
+
+    if (!token.isCancellationRequested && fs.existsSync(coverageDataFile)) {
+      const exportOutcome = await runPythonModule(
+        state,
+        run,
+        ["coverage", "json", "--data-file", coverageDataFile, "-o", coverageJsonFile],
+        token,
+      );
+      if (exportOutcome.exitCode !== 0) {
+        throw new Error(
+          exportOutcome.output.trim()
+            || "Coverage export failed. Ensure coverage.py is installed in the selected interpreter.",
+        );
+      }
+
+      addCoverageToRun(state, run, coverageJsonFile, detailsByFile);
+    }
+  } catch (error) {
+    vscode.window.showErrorMessage(buildCoverageErrorMessage(state, error));
+  } finally {
+    run.end();
+  }
+}
+
 async function buildExecutionPlan(state, request) {
-  const scanData = await loadScan(state);
-  ensureRootGroups(state, scanData);
+  const scanData = state.scanData || [];
 
   const sourceEntries = new Map();
-  const groupItems = new Map();
   const testTargets = new Map();
   const excludedIds = new Set((request.exclude || []).map((item) => item.id));
   const excludedTestIds = new Set();
@@ -240,26 +347,9 @@ async function buildExecutionPlan(state, request) {
     ? scanData.map((metadata) => getOrCreateSourceItem(state, metadata))
     : request.include;
 
-  if (runAll) {
-    for (const groupName of groupNames(scanData)) {
-      groupItems.set(groupName, getOrCreateGroupItem(state, groupName));
-    }
-  }
-
   for (const item of selectedItems) {
     const descriptor = decodeId(item.id);
     if (!descriptor || excludedIds.has(item.id)) {
-      continue;
-    }
-
-    if (descriptor.type === "group") {
-      groupItems.set(descriptor.group, getOrCreateGroupItem(state, descriptor.group));
-      const groupSources = scanData.filter((metadata) => groupForSource(metadata.source) === descriptor.group);
-      for (const metadata of groupSources) {
-        const entry = await ensureSourceEntry(state, metadata.source, sourceEntries);
-        entry.finalize = true;
-        addAllTestsToTargets(entry, testTargets, excludedTestIds);
-      }
       continue;
     }
 
@@ -267,7 +357,6 @@ async function buildExecutionPlan(state, request) {
       const entry = await ensureSourceEntry(state, descriptor.source, sourceEntries);
       entry.finalize = true;
       addAllTestsToTargets(entry, testTargets, excludedTestIds);
-      groupItems.set(groupForSource(descriptor.source), getOrCreateGroupItem(state, groupForSource(descriptor.source)));
       continue;
     }
 
@@ -277,11 +366,10 @@ async function buildExecutionPlan(state, request) {
       }
       const entry = await ensureSourceEntry(state, descriptor.source, sourceEntries);
       addTestToTargets(entry, descriptor.test, testTargets);
-      groupItems.set(groupForSource(descriptor.source), getOrCreateGroupItem(state, groupForSource(descriptor.source)));
     }
   }
 
-  return { groupItems, sourceEntries, testTargets };
+  return { sourceEntries, testTargets };
 }
 
 async function ensureSourceEntry(state, sourcePath, sourceEntries) {
@@ -338,40 +426,15 @@ function addTestToTargets(entry, testPath, testTargets) {
 }
 
 function getOrCreateSourceItem(state, metadata) {
-  const groupItem = getOrCreateGroupItem(state, groupForSource(metadata.source));
   const sourceId = encodeId({ type: "source", source: metadata.source });
-  const existing = groupItem.children.get(sourceId);
+  const existing = state.controller.items.get(sourceId);
   if (existing) {
     applyMetadataState(existing, metadata);
     return existing;
   }
 
   const item = createSourceItem(state, metadata);
-  groupItem.children.add(item);
-  updateGroupDescription(state, groupForSource(metadata.source));
-  return item;
-}
-
-function getOrCreateGroupItem(state, groupName) {
-  const id = encodeId({ type: "group", group: groupName });
-  const existing = state.controller.items.get(id);
-  if (existing) {
-    return existing;
-  }
-
-  const groupItem = createGroupItem(state, groupName, state.scanData || []);
-  state.controller.items.add(groupItem);
-  return groupItem;
-}
-
-function createGroupItem(state, groupName, scanData) {
-  const groupItems = scanData.filter((entry) => groupForSource(entry.source) === groupName);
-  const item = state.controller.createTestItem(
-    encodeId({ type: "group", group: groupName }),
-    groupName === "root" ? "root" : groupName,
-  );
-  item.canResolveChildren = true;
-  item.description = `${groupItems.length} module${groupItems.length === 1 ? "" : "s"}`;
+  state.controller.items.add(item);
   return item;
 }
 
@@ -379,7 +442,7 @@ function createSourceItem(state, metadata) {
   const sourceUri = vscode.Uri.file(path.join(state.workspaceFolder.uri.fsPath, metadata.source));
   const item = state.controller.createTestItem(
     encodeId({ type: "source", source: metadata.source }),
-    labelForSource(metadata.source),
+    metadata.source,
     sourceUri,
   );
   item.canResolveChildren = true;
@@ -400,72 +463,7 @@ function applyMetadataState(item, metadata) {
 }
 
 function removeSourceItem(state, sourcePath) {
-  const groupName = groupForSource(sourcePath);
-  const groupItem = state.controller.items.get(encodeId({ type: "group", group: groupName }));
-  if (!groupItem) {
-    return;
-  }
-
-  groupItem.children.delete(encodeId({ type: "source", source: sourcePath }));
-  updateGroupDescription(state, groupName);
-  if (!collectionHasItems(groupItem.children)) {
-    state.controller.items.delete(groupItem.id);
-  }
-}
-
-function updateGroupDescription(state, groupName) {
-  const groupItem = state.controller.items.get(encodeId({ type: "group", group: groupName }));
-  if (!groupItem) {
-    return;
-  }
-
-  const count = countCollectionItems(groupItem.children);
-  groupItem.description = `${count} module${count === 1 ? "" : "s"}`;
-}
-
-function ensureRootGroups(state, scanData) {
-  if (hasStatusOnlyRoot(state.controller.items)) {
-    replaceRootItems(state, scanData);
-    return;
-  }
-
-  for (const groupName of groupNames(scanData)) {
-    getOrCreateGroupItem(state, groupName);
-  }
-}
-
-function ensureNonEmptyState(state) {
-  if (!collectionHasItems(state.controller.items)) {
-    showStatusItem(state, "No related tests found");
-  }
-}
-
-async function loadScan(state, force = false) {
-  if (force) {
-    invalidateScan(state);
-  }
-  if (state.scanData) {
-    return state.scanData;
-  }
-  if (state.scanPromise) {
-    return state.scanPromise;
-  }
-
-  const args = ["scan", "--workspace", "."];
-  for (const sourceRoot of getConfiguration().sourceRoots) {
-    args.push("--source-root", sourceRoot);
-  }
-
-  state.scanPromise = runPythonJson(state, args)
-    .then((result) => {
-      state.scanData = Array.isArray(result) ? result : [];
-      return state.scanData;
-    })
-    .finally(() => {
-      state.scanPromise = null;
-    });
-
-  return state.scanPromise;
+  state.controller.items.delete(encodeId({ type: "source", source: sourcePath }));
 }
 
 async function inspectSource(state, sourcePath) {
@@ -494,41 +492,6 @@ async function inspectSource(state, sourcePath) {
 
 function invalidateScan(state) {
   state.scanData = null;
-  state.scanPromise = null;
-}
-
-function groupNames(scanData) {
-  const seen = new Set();
-  const groups = [];
-  for (const entry of scanData) {
-    const groupName = groupForSource(entry.source);
-    if (seen.has(groupName)) {
-      continue;
-    }
-    seen.add(groupName);
-    groups.push(groupName);
-  }
-  return groups.sort((left, right) => {
-    if (left === "root") {
-      return -1;
-    }
-    if (right === "root") {
-      return 1;
-    }
-    return left.localeCompare(right);
-  });
-}
-
-function groupForSource(source) {
-  return source.includes("/") ? source.split("/", 1)[0] : "root";
-}
-
-function labelForSource(source) {
-  if (!source.includes("/")) {
-    return source;
-  }
-  const segments = source.split("/");
-  return segments.slice(1).join("/");
 }
 
 function hasMetadata(metadata) {
@@ -545,27 +508,6 @@ function decodeId(value) {
   } catch {
     return null;
   }
-}
-
-function showStatusItem(state, label, errorText) {
-  clearCollection(state.controller.items);
-  const status = state.controller.createTestItem(
-    encodeId({ type: "status", label }),
-    label,
-  );
-  status.error = errorText;
-  state.controller.items.add(status);
-}
-
-function currentStatusItem(state) {
-  let found = null;
-  state.controller.items.forEach((item) => {
-    const descriptor = decodeId(item.id);
-    if (descriptor && descriptor.type === "status") {
-      found = item;
-    }
-  });
-  return found;
 }
 
 function clearCollection(collection) {
@@ -586,19 +528,6 @@ function countCollectionItems(collection) {
     count += 1;
   });
   return count;
-}
-
-function hasStatusOnlyRoot(collection) {
-  let count = 0;
-  let allStatus = true;
-  collection.forEach((item) => {
-    count += 1;
-    const descriptor = decodeId(item.id);
-    if (!descriptor || descriptor.type !== "status") {
-      allStatus = false;
-    }
-  });
-  return count === 0 || allStatus;
 }
 
 function ensureTarget(targets, testPath) {
@@ -673,41 +602,44 @@ function finalizeSourceResults(run, sourceEntries) {
   }
 }
 
-function finalizeGroupResults(run, groupItems, sourceEntries) {
-  for (const [groupName, groupItem] of groupItems.entries()) {
-    const exitCodes = [];
-    for (const entry of sourceEntries.values()) {
-      if (!entry.finalize || groupForSource(entry.metadata.source) !== groupName) {
-        continue;
-      }
-      for (const testPath of entry.selectedTests) {
-        const testItem = entry.testItems.get(testPath);
-        if (testItem && testItem.relatedExitCode !== undefined && testItem.relatedExitCode !== null) {
-          exitCodes.push(testItem.relatedExitCode);
-        }
-      }
-    }
-
-    if (exitCodes.length === 0) {
-      run.skipped(groupItem);
-      continue;
-    }
-
-    if (exitCodes.some((code) => code !== 0)) {
-      run.failed(groupItem, buildFailureMessage(groupName, "One or more related tests failed."));
-    } else {
-      run.passed(groupItem);
-    }
-  }
-}
-
 async function runPytestFile(state, run, testPath, token) {
   const configuration = getConfiguration();
-  const args = ["-m", "pytest", ...configuration.pytestArgs, testPath];
+  return runPythonModule(
+    state,
+    run,
+    ["pytest", ...configuration.pytestArgs, testPath],
+    token,
+    `Failed to start pytest for ${testPath}:`,
+  );
+}
+
+async function runPytestWithCoverageFile(state, run, testPath, token, coverageDataFile, appendCoverage) {
+  const configuration = getConfiguration();
+  const args = [
+    "coverage",
+    "run",
+    "--data-file",
+    coverageDataFile,
+  ];
+  if (appendCoverage) {
+    args.push("--append");
+  }
+  args.push("-m", "pytest", ...configuration.pytestArgs, testPath);
+  return runPythonModule(
+    state,
+    run,
+    args,
+    token,
+    `Failed to start pytest coverage for ${testPath}:`,
+  );
+}
+
+async function runPythonModule(state, run, moduleArgs, token, startErrorPrefix = "Failed to start Python module:") {
+  const configuration = getConfiguration();
   const workspaceRoot = state.workspaceFolder.uri.fsPath;
 
   return new Promise((resolve, reject) => {
-    const process = childProcess.spawn(configuration.pythonCommand, args, {
+    const process = childProcess.spawn(configuration.pythonCommand, ["-m", ...moduleArgs], {
       cwd: workspaceRoot,
       env: processEnv(),
     });
@@ -740,7 +672,7 @@ async function runPytestFile(state, run, testPath, token) {
     });
 
     process.on("error", (error) => {
-      finish(new Error(`Failed to start pytest for ${testPath}: ${error.message}`), true);
+      finish(new Error(`${startErrorPrefix} ${error.message}`), true);
     });
 
     process.on("close", (exitCode) => {
@@ -759,26 +691,97 @@ function buildFailureMessage(label, output) {
   return new vscode.TestMessage(text);
 }
 
+function buildCoverageErrorMessage(state, error) {
+  const base = `Related Tests coverage failed: ${errorMessage(error)}`;
+  const details = String(errorMessage(error));
+  if (!details.includes("No module named coverage")) {
+    return base;
+  }
+
+  const interpreter = getConfiguration().pythonCommand;
+  return `${base}. Install coverage in the selected interpreter (${interpreter}) or switch VS Code to a workspace interpreter that has it.`;
+}
+
+function addCoverageToRun(state, run, coverageJsonFile, detailsByFile) {
+  const raw = fs.readFileSync(coverageJsonFile, "utf-8");
+  const report = JSON.parse(raw || "{}");
+  const files = report.files && typeof report.files === "object" ? report.files : {};
+
+  for (const [filePath, fileCoverageData] of Object.entries(files)) {
+    const fileUri = resolveCoverageUri(state, filePath);
+    if (!fileUri) {
+      continue;
+    }
+
+    const summary = fileCoverageData.summary || {};
+    const covered = Number(summary.covered_lines || 0);
+    const total = Number(summary.num_statements || 0);
+    if (total <= 0) {
+      continue;
+    }
+
+    const coverage = new vscode.FileCoverage(
+      fileUri,
+      new vscode.TestCoverageCount(covered, total),
+    );
+    const details = buildStatementCoverage(fileCoverageData);
+    detailsByFile.set(coverage, details);
+    run.addCoverage(coverage);
+  }
+}
+
+function resolveCoverageUri(state, reportedPath) {
+  const workspaceRoot = state.workspaceFolder.uri.fsPath;
+  const candidate = path.isAbsolute(reportedPath)
+    ? reportedPath
+    : path.join(workspaceRoot, reportedPath);
+  const normalized = path.resolve(candidate);
+  if (!isInsideWorkspace(normalized, workspaceRoot)) {
+    return null;
+  }
+  if (!fs.existsSync(normalized) || !normalized.endsWith(".py")) {
+    return null;
+  }
+  return vscode.Uri.file(normalized);
+}
+
+function buildStatementCoverage(fileCoverageData) {
+  const executedLines = new Set(Array.isArray(fileCoverageData.executed_lines) ? fileCoverageData.executed_lines : []);
+  const missingLines = Array.isArray(fileCoverageData.missing_lines) ? fileCoverageData.missing_lines : [];
+  const allLines = new Set([...executedLines, ...missingLines]);
+  return Array.from(allLines)
+    .filter((line) => Number.isInteger(line) && line > 0)
+    .sort((left, right) => left - right)
+    .map((line) => new vscode.StatementCoverage(
+      executedLines.has(line) ? 1 : 0,
+      new vscode.Position(line - 1, 0),
+    ));
+}
+
 function getConfiguration() {
   const config = vscode.workspace.getConfiguration("relatedTests");
-  const sourceRoots = config.get("sourceRoots", DEFAULT_SOURCE_ROOTS);
   return {
     pythonCommand: resolvePythonCommand(config),
     pytestArgs: config.get("pytestArgs", []),
-    sourceRoots: Array.isArray(sourceRoots) && sourceRoots.length > 0 ? sourceRoots : DEFAULT_SOURCE_ROOTS,
   };
 }
 
 function resolvePythonCommand(config) {
   const configured = config.get("pythonCommand", "");
   if (typeof configured === "string" && configured.trim()) {
-    return configured.trim();
+    const resolvedConfigured = expandConfiguredPath(configured.trim());
+    if (isRunnablePythonCommand(resolvedConfigured)) {
+      return resolvedConfigured;
+    }
   }
 
   const pythonConfig = vscode.workspace.getConfiguration("python");
   const interpreterPath = pythonConfig.get("defaultInterpreterPath", "");
   if (typeof interpreterPath === "string" && interpreterPath.trim()) {
-    return interpreterPath.trim();
+    const resolvedInterpreterPath = expandConfiguredPath(interpreterPath.trim());
+    if (isRunnablePythonCommand(resolvedInterpreterPath)) {
+      return resolvedInterpreterPath;
+    }
   }
 
   const workspaceFolder = getWorkspaceFolder();
@@ -792,6 +795,35 @@ function resolvePythonCommand(config) {
   }
 
   return "python3";
+}
+
+function expandConfiguredPath(value) {
+  const workspaceFolder = getWorkspaceFolder();
+  let resolved = value;
+
+  if (workspaceFolder) {
+    resolved = resolved.replaceAll("${workspaceFolder}", workspaceFolder.uri.fsPath);
+    resolved = resolved.replaceAll(
+      "${workspaceFolderBasename}",
+      path.basename(workspaceFolder.uri.fsPath),
+    );
+  }
+
+  resolved = resolved.replace(/\$\{env:([^}]+)\}/g, (_, variableName) => process.env[variableName] || "");
+  return resolved;
+}
+
+function isRunnablePythonCommand(command) {
+  if (!command) {
+    return false;
+  }
+
+  const looksLikePath = command.includes(path.sep) || path.isAbsolute(command);
+  if (!looksLikePath) {
+    return true;
+  }
+
+  return fs.existsSync(command);
 }
 
 function runPythonJson(state, args) {
@@ -840,6 +872,22 @@ function runPythonJson(state, args) {
 
 function processEnv() {
   return { ...process.env };
+}
+
+function getActiveSourcePath(state) {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.uri.scheme !== "file") {
+    return null;
+  }
+
+  const workspaceRoot = state.workspaceFolder.uri.fsPath;
+  const filePath = editor.document.uri.fsPath;
+  if (!isInsideWorkspace(filePath, workspaceRoot)) {
+    return null;
+  }
+
+  const relativePath = path.relative(workspaceRoot, filePath).replace(/\\/g, "/");
+  return relativePath.endsWith(".py") ? relativePath : null;
 }
 
 function isInsideWorkspace(filePath, workspaceRoot) {

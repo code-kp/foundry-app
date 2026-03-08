@@ -56,19 +56,6 @@
             "type": "string"
           },
           "description": "Additional arguments passed to pytest for the Related Tests controller."
-        },
-        "relatedTests.sourceRoots": {
-          "type": "array",
-          "default": [
-            "api.py",
-            "server.py",
-            "core",
-            "workspace"
-          ],
-          "items": {
-            "type": "string"
-          },
-          "description": "Workspace-relative files or directories scanned for source metadata."
         }
       }
     }

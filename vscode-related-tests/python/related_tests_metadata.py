@@ -5,10 +5,7 @@ import ast
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
-
-
-DEFAULT_SOURCE_ROOTS = ("api.py", "server.py", "core", "workspace")
+from typing import Sequence
 
 
 @dataclass(frozen=True)
@@ -104,29 +101,15 @@ def inspect_source_file(path: Path, workspace_root: Path) -> RelatedSource:
     )
 
 
-def scan_related_sources(
-    workspace_root: Path,
-    source_roots: Sequence[str] = DEFAULT_SOURCE_ROOTS,
-) -> tuple[RelatedSource, ...]:
+def scan_related_sources(workspace_root: Path) -> tuple[RelatedSource, ...]:
     root = workspace_root.resolve()
     discovered: list[RelatedSource] = []
-    for source_root in source_roots:
-        candidate = root / source_root
-        if candidate.is_file() and candidate.suffix == ".py":
-            metadata = inspect_source_file(candidate, root)
-            if metadata.tests or metadata.errors:
-                discovered.append(metadata)
+    for file_path in sorted(root.rglob("*.py")):
+        if any(part in {"__pycache__", ".venv", "venv", "node_modules", ".git"} for part in file_path.parts):
             continue
-
-        if not candidate.is_dir():
-            continue
-
-        for file_path in sorted(candidate.rglob("*.py")):
-            if "__pycache__" in file_path.parts:
-                continue
-            metadata = inspect_source_file(file_path, root)
-            if metadata.tests or metadata.errors:
-                discovered.append(metadata)
+        metadata = inspect_source_file(file_path, root)
+        if metadata.tests or metadata.errors:
+            discovered.append(metadata)
 
     return tuple(discovered)
 
@@ -135,23 +118,12 @@ def _to_json(source: RelatedSource) -> dict[str, object]:
     return asdict(source)
 
 
-def _parse_source_roots(values: Iterable[str] | None) -> tuple[str, ...]:
-    roots = tuple(values or DEFAULT_SOURCE_ROOTS)
-    return roots or DEFAULT_SOURCE_ROOTS
-
-
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Inspect source-file related test metadata.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     scan_parser = subparsers.add_parser("scan", help="List source files that declare related tests.")
     scan_parser.add_argument("--workspace", default=".", help="Workspace root to inspect.")
-    scan_parser.add_argument(
-        "--source-root",
-        action="append",
-        dest="source_roots",
-        help="Source roots to scan. Defaults to api.py, server.py, core, workspace.",
-    )
 
     inspect_parser = subparsers.add_parser("inspect", help="Inspect a single source file.")
     inspect_parser.add_argument("source", help="Source file path relative to the workspace root.")
@@ -161,7 +133,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     workspace_root = Path(args.workspace)
 
     if args.command == "scan":
-        results = scan_related_sources(workspace_root, _parse_source_roots(args.source_roots))
+        results = scan_related_sources(workspace_root)
         print(json.dumps([_to_json(item) for item in results]))
         return 0
 

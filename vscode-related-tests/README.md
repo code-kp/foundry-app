@@ -12,8 +12,20 @@ Tests:
 """
 ```
 
-When you expand a source module in the Testing pane, the controller resolves only the related `tests/...py` files declared in that module. Running a source module node executes each related file through `python -m pytest`, which means existing `unittest.TestCase` suites still run under pytest collection.
+The controller follows the active Python file in the editor. When the active file declares related tests, the tree shows only that module and the related `tests/...py` files declared in it.
+
+Profiles:
+- `Run`
+  - executes the related files through `python -m pytest`
+- `Debug`
+  - launches `pytest` under the Python debugger
+- `Coverage`
+  - runs the related files through `coverage.py` and publishes file coverage back into VS Code
+
+Coverage note:
+- the selected interpreter must have `coverage` installed
+- if `coverage.py` is missing, the coverage profile will fail with a startup/error message
 
 The extension ships its own Python metadata helper under `python/related_tests_metadata.py`, so the editor-specific logic stays out of the runtime framework.
 
-The global Testing-pane refresh remains global. For module-scoped refresh, use `Refresh Related Tests` on a source item in the `Related Tests` tree.
+Switch editors to change the displayed module. Use `Refresh Related Tests` on the source item if you want to reload the active file after editing its metadata.

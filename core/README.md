@@ -16,6 +16,9 @@ Author-facing definitions.
 - `execution.py`
   - Defines `ExecutionConfig`
   - This is the runtime contract for execution limits and guardrails
+- `hooks.py`
+  - Defines `AgentHooks`
+  - This is the runtime extension point for agent-specific prompt guidance, per-turn state, and final response shaping
 - `tools.py`
   - Defines `ToolDefinition`, `ToolModule`, `register_tool_class()`, and `ProgressUpdater`
   - This is the main API for defining tools
@@ -112,20 +115,18 @@ Responsibilities:
 Use this when:
 - you want one top-level object that represents the platform runtime
 
-### `core/runtime/`
+### `core/execution/`
 
 Per-agent execution package.
 
-- `engine.py`
-  - Owns per-turn orchestration and runtime lifecycle
-- `prompts.py`
-  - Builds agent instructions, runtime context injection, and tool reasoning text
-- `adk.py`
-  - Wraps ADK agent creation and threaded event streaming helpers
-- `tooling.py`
-  - Applies execution guardrails to tool callables
-- `types.py`
-  - Defines `AgentRecord`
+- `direct/`
+  - Direct model-led tool-calling runtime
+- `orchestrated/`
+  - Explicit `plan -> execute -> replan -> verify` runtime
+- `shared/`
+  - ADK helpers, guarded tool wrapping, and shared execution types
+- `factory.py`
+  - Picks the right execution runtime for each agent definition
 
 Responsibilities:
 - build the ADK agent
@@ -153,9 +154,9 @@ Examples:
 
 1. `core/discovery.py` scans `workspace/`
 2. `core/platform.py` refreshes the catalog and runtimes
-3. `core/runtime/engine.py` receives a user message
+3. `core/execution/direct/runtime.py` or `core/execution/orchestrated/runtime.py` receives a user message
 4. `core/skills/resolver.py` picks relevant skill summaries and excerpts
-5. `core/runtime/prompts.py` injects that context and gives the model the available tool catalog
+5. `core/execution/direct/prompts.py` or `core/execution/orchestrated/prompts.py` injects that context and gives the model the available tool catalog
 6. the ADK agent decides whether tools are needed and may chain them iteratively
 7. `core/guardrails.py` enforces framework limits during tool execution
 8. `core/stream/progress.py` emits live events to the UI
@@ -171,11 +172,13 @@ Use this split consistently.
 - answer format
 - domain behavior
 - synthesis strategy after information is available
+- agent-specific prompt augmentation or final response post-processing
 
 Examples:
 - "Answer in 1-4 sentences"
 - "Prefer concise support responses"
 - "Use internal guidance before web research when possible"
+- "Rewrite bare citation numbers into clickable links for web agents"
 
 ### Put it in a tool if it is:
 
@@ -220,12 +223,14 @@ Examples:
 ### Best way to define an agent
 
 Recommended:
-- use `AgentModule`
+- use `AgentModule` for simple direct tool-calling agents
+- use `OrchestratedAgentModule` when you want the framework to run an explicit `plan -> execute -> replan -> verify` loop
 - keep the system prompt focused on behavior, not retrieval plumbing
 - list only explicit tools by name
 - use `skill_scopes` to declare what knowledge the agent is allowed to use
 - use `always_on_skills` only for small, stable skills
-- let the model plan tool usage; use `ExecutionConfig` only for limits and guardrails
+- let the model plan tool usage; use `ExecutionConfig` only for tool-loop limits and guardrails
+- use `hooks` when one agent family needs custom prompt guidance or final response shaping that should not live in `core`
 
 Example:
 
@@ -261,6 +266,22 @@ class SupportTriage(AgentModule):
     )
 ```
 
+Hook example:
+
+```python
+from core.contracts.agent import AgentModule, register_agent_class
+from workspace.agents.web.hooks import WebCitationHooks
+
+
+@register_agent_class
+class WebAnswer(AgentModule):
+    name = "Web Answer"
+    description = "Answers using public web sources."
+    system_prompt = "Answer clearly and cite web evidence inline."
+    tools = ("search_web", "fetch_web_page")
+    hooks = WebCitationHooks()
+```
+
 Do not:
 - hardcode file paths into agent definitions
 - put large domain knowledge directly in the system prompt
@@ -269,7 +290,35 @@ Do not:
 Implicit framework tools:
 - `search_skills` is included through the default core toolset
 - agent authors should not keep re-listing framework tools in every agent definition
-- tool planning is model-driven by default; the framework only enforces budgets and repetition limits
+- tool planning is model-driven; the framework only enforces budgets and repetition limits
+
+Agent interfaces:
+- `AgentModule`: direct ADK agent runtime; the model decides tool calls directly
+- `OrchestratedAgentModule`: ADK custom-controller runtime; the framework runs planner, executor, replanner, and verifier sub-agents for you
+
+Orchestrated example:
+
+```python
+from core.contracts.agent import OrchestratedAgentModule, register_orchestrated_agent_class
+from core.contracts.execution import ExecutionConfig
+
+
+@register_orchestrated_agent_class
+class WebResearch(OrchestratedAgentModule):
+    name = "Web Research"
+    description = "Plans, researches, verifies, and answers using public web sources."
+    system_prompt = "Answer thoroughly, verify important claims, and cite external evidence inline."
+    tools = (
+        "get_current_utc_time",
+        "search_web",
+        "fetch_web_page",
+    )
+    execution = ExecutionConfig(
+        max_tool_calls=8,
+        max_replans=3,
+        max_verification_rounds=2,
+    )
+```
 
 ### Best way to define a tool
 

@@ -21,13 +21,15 @@ Use this file for contributor-facing authoring rules.
 
 Recommended:
 - use one class per agent module
-- inherit from `AgentModule`
+- inherit from `AgentModule` for simple direct tool-calling agents
+- inherit from `OrchestratedAgentModule` when you want the framework to drive `plan -> execute -> replan -> verify`
 - register with `@register_agent_class`
 - keep the prompt focused on behavior and synthesis
 - reference only explicit tools by name
 - use `skill_scopes` to define allowed knowledge
 - use `always_on_skills` only for small persona/policy skills
-- let the model decide whether tools are needed; use `execution` only for tool-loop limits
+- let the model decide whether tools are needed; use `execution` only for tool-loop limits and guardrails
+- use `hooks` only for agent-specific prompt additions or final response shaping that should not move into `core`
 
 Example:
 
@@ -47,6 +49,27 @@ class MyAgent(AgentModule):
     execution = ExecutionConfig(max_tool_calls=6)
 ```
 
+Hook example:
+
+```python
+from core.contracts.agent import AgentModule, register_agent_class
+from core.contracts.hooks import AgentHooks
+
+
+class MyHooks(AgentHooks):
+    def finalize_response(self, *, text, state):
+        return text.strip()
+
+
+@register_agent_class
+class MyAgent(AgentModule):
+    name = "My Agent"
+    description = "What it does"
+    system_prompt = "How it should behave"
+    tools = ("search_web",)
+    hooks = MyHooks()
+```
+
 Better prompt shape:
 - what kind of answers it should produce
 - what tradeoffs it should make
@@ -61,6 +84,22 @@ Implicit framework tools:
 - `search_skills` is automatically available through the default core toolset
 - do not add it explicitly unless you are intentionally overriding the default model
 - reserve `tools = (...)` for explicit capabilities like web search, time, APIs, or integrations
+
+Orchestrated example:
+
+```python
+from core.contracts.agent import OrchestratedAgentModule, register_orchestrated_agent_class
+from core.contracts.execution import ExecutionConfig
+
+
+@register_orchestrated_agent_class
+class ResearchAgent(OrchestratedAgentModule):
+    name = "Research Agent"
+    description = "Plans and verifies before answering."
+    system_prompt = "Answer with verification and cite external evidence inline."
+    tools = ("get_current_utc_time", "search_web", "fetch_web_page")
+    execution = ExecutionConfig(max_tool_calls=8, max_replans=3, max_verification_rounds=2)
+```
 
 ## Best Way To Define A Tool
 
@@ -169,3 +208,4 @@ Keep contributor code simple:
 - skills hold reusable knowledge/instructions
 
 Do not push platform orchestration into workspace code unless there is a clear need.
+Do keep agent-specific formatting and post-processing in hooks instead of adding those rules to `core`.

@@ -20,14 +20,14 @@ from google.adk.sessions import InMemorySessionService
 def create_llm_agent(
     *,
     agent_id: str,
-    model_name: str,
+    model: Any,
     instruction: str,
     tool_callables: Sequence[Callable[..., Any]],
     before_model_callback: Callable[[Any, Any], Any],
 ) -> LlmAgent:
     return LlmAgent(
         name=agent_id.replace(".", "_"),
-        model=model_name,
+        model=model,
         instruction=instruction,
         tools=list(tool_callables),
         before_model_callback=before_model_callback,

@@ -19,11 +19,13 @@ import core.contracts.agent as contracts_agent
 import core.contracts.execution as contracts_execution
 import core.contracts.hooks as contracts_hooks
 import core.contracts.memory as contracts_memory
+import core.contracts.models as contracts_models
 import core.contracts.tools as contracts_tools
 import core.guardrails as guardrails_module
 import core.memory as memory_module
 import core.registry as registry
 import core.execution.shared.adk as runtime_adk
+import core.execution.shared.models as runtime_models
 import core.execution.direct.prompts as runtime_prompts
 import core.execution.shared.tooling as runtime_tooling
 import core.execution.shared.types as runtime_types
@@ -49,6 +51,7 @@ class DirectAgentRuntime:
         self.memory: contracts_memory.MemoryConfig = self.definition.memory
         self.hooks: contracts_hooks.AgentHooks = self.definition.hooks
         self.model_name, self._model_source = self._resolve_model_name()
+        self.resolved_model = runtime_models.resolve_model(self.model_name)
         self.model_timeout_seconds = self._resolve_model_timeout_seconds()
         self._resolved_tools = contracts_tools.ensure_tools(self.definition.tools)
         self._tool_definitions: Dict[str, contracts_tools.ToolDefinition] = {
@@ -119,6 +122,9 @@ class DirectAgentRuntime:
 
         env_model = (os.getenv("MODEL_NAME") or "").strip()
         if env_model:
+            env_backend = (os.getenv("MODEL_BACKEND") or "").strip().lower()
+            if env_backend == "litellm":
+                env_model = contracts_models.lite_llm_model(env_model)
             return env_model, "env"
 
         return DEFAULT_MODEL, "default"
@@ -147,7 +153,7 @@ class DirectAgentRuntime:
         )
         return runtime_adk.create_llm_agent(
             agent_id=self.record.agent_id,
-            model_name=self.model_name,
+            model=self.resolved_model.adk_model,
             instruction=instruction,
             tool_callables=list(self._tool_callables.values()),
             before_model_callback=self._before_model_callback,
@@ -393,17 +399,18 @@ class DirectAgentRuntime:
                 session_id=session_id,
                 message=message_text,
                 error="model_timeout",
-                assistant_text="" if assistant_buffer.strip() else message_text,
                 usage=usage_aggregator.summary(),
             )
         except Exception as exc:
-            message_text = stream_messages.build_error_message(str(exc))
+            message_text = runtime_models.describe_model_error(
+                exc,
+                model_reference=self.model_name,
+            )
             await self._emit_terminal_error(
                 stream,
                 session_id=session_id,
                 message=message_text,
-                error=str(exc),
-                assistant_text="" if assistant_buffer.strip() else message_text,
+                error="model_error",
                 usage=usage_aggregator.summary(),
             )
         finally:

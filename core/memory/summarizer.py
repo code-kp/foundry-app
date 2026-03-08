@@ -9,6 +9,7 @@ from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
 import core.execution.shared.adk as shared_adk
+import core.execution.shared.models as shared_models
 from core.memory.context import MemoryMessage
 
 
@@ -37,6 +38,7 @@ class MemorySummarizer:
     ) -> None:
         self.agent_id = agent_id
         self.model_name = model_name
+        self.resolved_model = shared_models.resolve_model(model_name)
         self.timeout_seconds = timeout_seconds
 
     async def summarize(
@@ -68,7 +70,7 @@ class MemorySummarizer:
 
         agent = shared_adk.create_llm_agent(
             agent_id=_sanitize_agent_identifier(self.agent_id),
-            model_name=self.model_name,
+            model=self.resolved_model.adk_model,
             instruction=_summary_instruction(max_summary_chars=max_summary_chars),
             tool_callables=[],
             before_model_callback=lambda *_args, **_kwargs: None,

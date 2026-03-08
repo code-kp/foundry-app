@@ -12,6 +12,7 @@ from google.genai import types
 from core.platform import AgentPlatform
 
 import core.execution.shared.adk as shared_adk
+import core.execution.shared.models as shared_models
 
 
 AI_TIMEOUT_SECONDS = 20.0
@@ -58,6 +59,7 @@ class AiService:
         model_name = str(getattr(runtime, "model_name", "") or "").strip()
         if not model_name:
             raise AiServiceError("Could not resolve a model for the AI request.")
+        resolved_model = shared_models.resolve_model(model_name)
 
         session_service = InMemorySessionService()
         session_id = "ui-{value}".format(value=uuid4())
@@ -72,7 +74,7 @@ class AiService:
 
         agent = shared_adk.create_llm_agent(
             agent_id=build_ui_agent_identifier(resolved_agent_id),
-            model_name=model_name,
+            model=resolved_model.adk_model,
             instruction=normalized_instructions,
             tool_callables=[],
             before_model_callback=lambda *_args, **_kwargs: None,
@@ -108,6 +110,8 @@ class AiService:
         except TimeoutError as exc:
             raise AiServiceError("Timed out waiting for the AI response.") from exc
         except Exception as exc:
-            raise AiServiceError(str(exc) or "AI request failed.") from exc
+            raise AiServiceError(
+                shared_models.describe_model_error(exc, model_reference=model_name)
+            ) from exc
 
         return generated.strip()

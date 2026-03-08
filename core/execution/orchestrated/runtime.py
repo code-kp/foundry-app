@@ -22,7 +22,7 @@ class OrchestratedAgentRuntime(direct_runtime.DirectAgentRuntime):
             agent_name=self.record.agent_id.replace(".", "_"),
             description=self.definition.description,
             system_prompt=self.definition.system_prompt,
-            model_name=self.model_name,
+            model=self.resolved_model.adk_model,
             tool_callables=list(self._tool_callables.values()),
             tool_definitions=tuple(self._tool_definitions.values()),
             execution_config=self.execution,

@@ -504,7 +504,7 @@ def build_orchestrated_controller(
     agent_name: str,
     description: str,
     system_prompt: str,
-    model_name: str,
+    model: Any,
     tool_callables: Sequence[Callable[..., Any]],
     tool_definitions: Sequence[Any],
     execution_config: contracts_execution.ExecutionConfig,
@@ -514,7 +514,7 @@ def build_orchestrated_controller(
     planner_agent = LlmAgent(
         name="{name}_planner".format(name=agent_name),
         description="Creates a concrete execution plan.",
-        model=model_name,
+        model=model,
         instruction=lambda ctx: orchestrated_prompts.planner_instruction(
             agent_name=agent_name,
             system_prompt=system_prompt,
@@ -533,7 +533,7 @@ def build_orchestrated_controller(
     executor_agent = LlmAgent(
         name="{name}_executor".format(name=agent_name),
         description="Executes the current step using available tools.",
-        model=model_name,
+        model=model,
         instruction=lambda ctx: orchestrated_prompts.executor_instruction(
             agent_name=agent_name,
             system_prompt=system_prompt,
@@ -551,7 +551,7 @@ def build_orchestrated_controller(
     replanner_agent = LlmAgent(
         name="{name}_replanner".format(name=agent_name),
         description="Decides whether to continue, replan, or finalize.",
-        model=model_name,
+        model=model,
         instruction=lambda ctx: orchestrated_prompts.replanner_instruction(
             agent_name=agent_name,
             system_prompt=system_prompt,
@@ -569,7 +569,7 @@ def build_orchestrated_controller(
     verifier_agent = LlmAgent(
         name="{name}_verifier".format(name=agent_name),
         description="Checks whether the evidence is enough and prepares final-answer guidance.",
-        model=model_name,
+        model=model,
         instruction=lambda ctx: orchestrated_prompts.verifier_instruction(
             agent_name=agent_name,
             system_prompt=system_prompt,
@@ -587,7 +587,7 @@ def build_orchestrated_controller(
     writer_agent = LlmAgent(
         name="{name}_writer".format(name=agent_name),
         description="Streams the final user-facing answer from the verified evidence.",
-        model=model_name,
+        model=model,
         instruction=lambda ctx: orchestrated_prompts.writer_instruction(
             agent_name=agent_name,
             system_prompt=system_prompt,

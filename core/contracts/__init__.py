@@ -22,6 +22,13 @@ from core.contracts.memory import (
     MemoryConfig,
     ensure_memory_config,
 )
+from core.contracts.models import (
+    LITELLM_PREFIX,
+    is_lite_llm_model,
+    lite_llm_model,
+    normalize_lite_llm_reference,
+    strip_lite_llm_prefix,
+)
 from core.contracts.skills import (
     VALID_SKILL_CLASSES,
     SkillDefinition,
@@ -62,6 +69,7 @@ __all__ = [
     "DEFAULT_MEMORY_CONFIG",
     "ExecutionConfig",
     "DISABLED_MEMORY_CONFIG",
+    "LITELLM_PREFIX",
     "ProgressUpdater",
     "MemoryConfig",
     "SkillDefinition",
@@ -79,6 +87,9 @@ __all__ = [
     "ensure_tools",
     "ensure_tool_references",
     "get_core_toolset",
+    "is_lite_llm_model",
+    "lite_llm_model",
+    "normalize_lite_llm_reference",
     "register_agent_class",
     "register_orchestrated_agent_class",
     "register_core_toolset",
@@ -87,7 +98,8 @@ __all__ = [
     "register_tool_class",
     "register_tools",
     "resolve_tool",
+    "tool",
     "tool_from_class",
     "tool_reference_name",
-    "tool",
+    "strip_lite_llm_prefix",
 ]

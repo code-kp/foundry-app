@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/test_registry.py
+"""
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Type, TypeVar
@@ -61,4 +66,3 @@ class Register:
             cls._items.clear()
             return
         cls._items.pop(item_type, None)
-

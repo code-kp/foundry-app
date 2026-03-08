@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/workspace/tools/test_web_search_strategy.py
+"""
+
 from __future__ import annotations
 
 import re
@@ -108,4 +113,3 @@ def add_query(queries: list[str], value: str) -> None:
     if not normalized or normalized in queries:
         return
     queries.append(normalized)
-

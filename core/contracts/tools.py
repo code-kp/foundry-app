@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/contracts/test_tools.py
+"""
+
 from __future__ import annotations
 
 import asyncio

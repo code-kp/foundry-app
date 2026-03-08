@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/workspace/agents/web/test_research.py
+"""
+
 from __future__ import annotations
 
 from core.contracts.agent import OrchestratedAgentModule, register_orchestrated_agent_class

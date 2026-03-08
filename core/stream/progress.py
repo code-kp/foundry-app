@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/stream/test_progress.py
+"""
+
 from __future__ import annotations
 
 import asyncio

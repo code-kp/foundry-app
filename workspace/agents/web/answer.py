@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/workspace/agents/web/test_answer.py
+"""
+
 from __future__ import annotations
 
 from core.contracts.agent import AgentModule, register_agent_class

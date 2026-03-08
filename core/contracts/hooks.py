@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/contracts/test_hooks.py
+"""
+
 from __future__ import annotations
 
 from typing import Any

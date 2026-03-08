@@ -173,6 +173,11 @@ That is the whole public model:
   - retrievable reference material
   - examples: product facts, workflows, FAQs, policies, docs
 
+`workflow` is not a separate skill class.
+
+- put workflows under `knowledge`
+- examples: `support.refund_workflow`, `ops.incident_triage`
+
 Inside `behavior`, the two common patterns are:
 
 - `persona`

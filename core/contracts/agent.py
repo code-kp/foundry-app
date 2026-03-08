@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/contracts/test_agent.py
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -5,6 +10,7 @@ from typing import Optional, Sequence, Type
 
 import core.contracts.execution as contracts_execution
 import core.contracts.hooks as contracts_hooks
+import core.contracts.memory as contracts_memory
 import core.contracts.skills as contracts_skills
 import core.contracts.tools as contracts_tools
 from core.registry import Register
@@ -21,6 +27,8 @@ class Agent:
     description: str
     system_prompt: str
     tools: Sequence[contracts_tools.ToolLike]
+    behavior_skills: Sequence[str] = ()
+    knowledge_skills: Sequence[str] = ()
     skill_scopes: Sequence[str] = ()
     always_on_skills: Sequence[str] = ()
     skills_dir: Optional[str] = None
@@ -29,9 +37,20 @@ class Agent:
     execution: contracts_execution.ExecutionConfig = field(
         default_factory=lambda: contracts_execution.DEFAULT_EXECUTION_CONFIG
     )
+    memory: contracts_memory.MemoryConfig = field(
+        default_factory=lambda: contracts_memory.DEFAULT_MEMORY_CONFIG
+    )
     hooks: contracts_hooks.AgentHooks = field(
         default_factory=lambda: contracts_hooks.DEFAULT_AGENT_HOOKS
     )
+
+    @property
+    def behavior(self) -> Sequence[str]:
+        return self.behavior_skills
+
+    @property
+    def knowledge(self) -> Sequence[str]:
+        return self.knowledge_skills
 
 
 class AgentModule:
@@ -51,6 +70,10 @@ class AgentModule:
     description: str = ""
     system_prompt: str = ""
     tools: Sequence[contracts_tools.ToolLike] = ()
+    behavior: Sequence[str] = ()
+    knowledge: Sequence[str] = ()
+    behavior_skills: Sequence[str] = ()
+    knowledge_skills: Sequence[str] = ()
     skill_scopes: Sequence[str] = ()
     always_on_skills: Sequence[str] = ()
     include_core_tools: bool = True
@@ -59,6 +82,7 @@ class AgentModule:
     model: Optional[str] = None
     runtime_mode: str = "direct"
     execution: contracts_execution.ExecutionConfig = contracts_execution.DEFAULT_EXECUTION_CONFIG
+    memory: contracts_memory.MemoryConfig = contracts_memory.DEFAULT_MEMORY_CONFIG
     hooks: contracts_hooks.AgentHooks = contracts_hooks.DEFAULT_AGENT_HOOKS
 
 
@@ -74,6 +98,10 @@ def define_agent(
     description: str,
     system_prompt: str,
     tools: Optional[Sequence[contracts_tools.ToolLike]] = None,
+    behavior: Optional[Sequence[str]] = None,
+    knowledge: Optional[Sequence[str]] = None,
+    behavior_skills: Optional[Sequence[str]] = None,
+    knowledge_skills: Optional[Sequence[str]] = None,
     skill_scopes: Optional[Sequence[str]] = None,
     always_on_skills: Optional[Sequence[str]] = None,
     include_core_tools: bool = True,
@@ -82,6 +110,7 @@ def define_agent(
     model: Optional[str] = None,
     runtime_mode: str = "direct",
     execution: Optional[contracts_execution.ExecutionConfig] = None,
+    memory: Optional[contracts_memory.MemoryConfig] = None,
     hooks: Optional[contracts_hooks.AgentHooks] = None,
 ) -> Agent:
     normalized_runtime_mode = str(runtime_mode or "direct").strip().lower()
@@ -93,6 +122,8 @@ def define_agent(
             )
         )
     normalized_scopes = _resolve_skill_scopes(skill_scopes=skill_scopes, skills_dir=skills_dir)
+    resolved_behavior = behavior if behavior is not None else behavior_skills
+    resolved_knowledge = knowledge if knowledge is not None else knowledge_skills
     return Agent(
         name=name,
         description=description,
@@ -102,12 +133,15 @@ def define_agent(
             include_core_tools=include_core_tools,
             core_toolsets=core_toolsets,
         ),
+        behavior_skills=contracts_skills.ensure_skill_ids(resolved_behavior),
+        knowledge_skills=contracts_skills.ensure_skill_ids(resolved_knowledge),
         skill_scopes=normalized_scopes,
         always_on_skills=contracts_skills.ensure_skill_ids(always_on_skills),
         skills_dir=skills_dir,
         model=model,
         runtime_mode=normalized_runtime_mode,
         execution=contracts_execution.ensure_execution_config(execution),
+        memory=contracts_memory.ensure_memory_config(memory),
         hooks=contracts_hooks.ensure_agent_hooks(hooks),
     )
 
@@ -129,6 +163,8 @@ def agent_from_class(agent_cls: Type[AgentModule]) -> Agent:
         description=getattr(agent_cls, "description", "") or agent_cls.name,
         system_prompt=agent_cls.system_prompt,
         tools=getattr(agent_cls, "tools", ()),
+        behavior=_resolve_class_skill_alias(agent_cls, "behavior", "behavior_skills"),
+        knowledge=_resolve_class_skill_alias(agent_cls, "knowledge", "knowledge_skills"),
         skill_scopes=getattr(agent_cls, "skill_scopes", ()),
         always_on_skills=getattr(agent_cls, "always_on_skills", ()),
         include_core_tools=getattr(agent_cls, "include_core_tools", True),
@@ -137,6 +173,7 @@ def agent_from_class(agent_cls: Type[AgentModule]) -> Agent:
         model=getattr(agent_cls, "model", None),
         runtime_mode=getattr(agent_cls, "runtime_mode", "direct"),
         execution=getattr(agent_cls, "execution", contracts_execution.DEFAULT_EXECUTION_CONFIG),
+        memory=getattr(agent_cls, "memory", contracts_memory.DEFAULT_MEMORY_CONFIG),
         hooks=getattr(agent_cls, "hooks", contracts_hooks.DEFAULT_AGENT_HOOKS),
     )
 
@@ -171,3 +208,13 @@ def _resolve_skill_scopes(
         if candidate not in normalized_scopes:
             normalized_scopes.append(candidate)
     return tuple(normalized_scopes)
+
+
+def _resolve_class_skill_alias(
+    agent_cls: Type[AgentModule],
+    preferred_attr: str,
+    legacy_attr: str,
+) -> Sequence[str]:
+    if preferred_attr in agent_cls.__dict__:
+        return getattr(agent_cls, preferred_attr)
+    return getattr(agent_cls, legacy_attr, ())

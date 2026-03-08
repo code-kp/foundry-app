@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from google.genai import types
 
 from core.contracts.agent import Agent
 from core.contracts.execution import ExecutionConfig
 from core.contracts.tools import ToolDefinition
+from core.memory.context import MemorySnapshot, format_memory_context, normalize_memory_messages
 from core.skills.resolver import ResolvedSkillContext
 from core.skills.store import SkillChunk
 
@@ -36,13 +37,28 @@ def build_agent_instruction(
     )
 
 
-def apply_runtime_context(llm_request: Any, resolved_context: ResolvedSkillContext) -> None:
+def normalize_conversation_history(history: Sequence[Mapping[str, Any]] | None) -> list[dict[str, str]]:
+    return [
+        {"role": item.role, "text": item.text}
+        for item in normalize_memory_messages(history, limit=8, max_chars=320)
+    ]
+
+
+def apply_runtime_context(
+    llm_request: Any,
+    resolved_context: ResolvedSkillContext,
+    *,
+    conversation_history: Sequence[Mapping[str, str]] | None = None,
+    memory_snapshot: MemorySnapshot | None = None,
+) -> None:
     config = getattr(llm_request, "config", None)
     if config is None:
         return
 
     skill_prompt = format_skill_context(resolved_context)
-    if not skill_prompt:
+    memory_prompt = format_memory_context(memory_snapshot or MemorySnapshot())
+    history_prompt = "" if memory_prompt else format_conversation_history(conversation_history or [])
+    if not skill_prompt and not history_prompt and not memory_prompt:
         return
 
     system_instruction = config.system_instruction or types.Content(role="system", parts=[])
@@ -59,14 +75,32 @@ def apply_runtime_context(llm_request: Any, resolved_context: ResolvedSkillConte
     if marker in existing:
         return
 
-    runtime_context = "\n\n".join(
-        ["Relevant runtime context for this turn:", skill_prompt]
-    )
+    runtime_parts = ["Relevant runtime context for this turn:"]
+    if memory_prompt:
+        runtime_parts.append(memory_prompt)
+    if history_prompt:
+        runtime_parts.append(history_prompt)
+    if skill_prompt:
+        runtime_parts.append(skill_prompt)
+    runtime_context = "\n\n".join(runtime_parts)
     system_instruction.parts[0].text = "{existing}\n\n{runtime_context}".format(
         existing=existing.strip(),
         runtime_context=runtime_context,
     ).strip()
     config.system_instruction = system_instruction
+
+
+def format_conversation_history(history: Sequence[Mapping[str, str]]) -> str:
+    normalized = normalize_conversation_history(history)
+    if not normalized:
+        return ""
+    lines = [
+        "Recent conversation history:",
+        "Use this to resolve follow-up references and implied context from earlier turns.",
+    ]
+    for item in normalized:
+        lines.append("{role}: {text}".format(role=item["role"], text=item["text"]))
+    return "\n".join(lines)
 
 
 def format_skill_context(context: ResolvedSkillContext) -> str:
@@ -80,9 +114,9 @@ def format_skill_context(context: ResolvedSkillContext) -> str:
         lines.append("Always-on skills:")
         for skill in context.always_on_skills:
             lines.append(
-                "- [{skill_id}] ({skill_type}) {title}: {summary}".format(
+                "- [{skill_id}] ({skill_class}) {title}: {summary}".format(
                     skill_id=skill.id,
-                    skill_type=skill.skill_type,
+                    skill_class=skill.skill_class,
                     title=skill.title,
                     summary=skill.summary,
                 )
@@ -91,9 +125,9 @@ def format_skill_context(context: ResolvedSkillContext) -> str:
         lines.append("Retrieved skills:")
         for skill in context.selected_skills:
             lines.append(
-                "- [{skill_id}] ({skill_type}) {title}: {summary}".format(
+                "- [{skill_id}] ({skill_class}) {title}: {summary}".format(
                     skill_id=skill.id,
-                    skill_type=skill.skill_type,
+                    skill_class=skill.skill_class,
                     title=skill.title,
                     summary=skill.summary,
                 )

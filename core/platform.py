@@ -1,7 +1,12 @@
+"""
+Tests:
+- tests/core/test_platform.py
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from dotenv import load_dotenv
 
@@ -60,6 +65,14 @@ class AgentPlatform:
 
         self._records = records
 
+    def resolve_runtime(self, agent_id: Optional[str]) -> tuple[str, Any]:
+        self.refresh()
+        resolved_agent = agent_id or sorted(self._records.keys())[0]
+        runtime = self._runtimes.get(resolved_agent)
+        if runtime is None:
+            raise KeyError("Unknown agent id: {agent_id}".format(agent_id=resolved_agent))
+        return resolved_agent, runtime
+
     @property
     def default_agent_id(self) -> str:
         self.refresh()
@@ -81,6 +94,7 @@ class AgentPlatform:
                 {
                     "id": item.skill_id,
                     "source": item.source,
+                    "class": item.definition.skill_class,
                     "type": item.definition.skill_type,
                     "title": item.definition.title,
                     "summary": item.definition.summary,
@@ -165,18 +179,18 @@ class AgentPlatform:
         message: str,
         user_id: str,
         session_id: Optional[str],
+        history: Optional[Sequence[Mapping[str, Any]]] = None,
+        stream: bool = True,
     ):
-        self.refresh()
-        resolved_agent = agent_id or sorted(self._records.keys())[0]
-        runtime = self._runtimes.get(resolved_agent)
-        if runtime is None:
-            raise KeyError("Unknown agent id: {agent_id}".format(agent_id=resolved_agent))
-        active_session_id, stream = await runtime.stream_chat(
+        resolved_agent, runtime = self.resolve_runtime(agent_id)
+        active_session_id, event_stream = await runtime.stream_chat(
             message=message,
             user_id=user_id,
             session_id=session_id,
+            history=history,
+            stream=stream,
         )
-        return resolved_agent, active_session_id, stream
+        return resolved_agent, active_session_id, event_stream
 
     def upload_skill_markdown(
         self,
@@ -216,6 +230,7 @@ class AgentPlatform:
             "source": definition.source,
             "path": str(definition.path),
             "title": definition.title,
+            "class": definition.skill_class,
             "type": definition.skill_type,
             "mode": definition.mode,
             "summary": definition.summary,

@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/skills/test_parser.py
+"""
+
 from __future__ import annotations
 
 import re
@@ -6,6 +11,7 @@ from typing import Any, Dict, List, Tuple
 
 from core.contracts.skills import (
     SkillDefinition,
+    VALID_SKILL_CLASSES,
     VALID_SKILL_MODES,
     VALID_SKILL_TYPES,
 )
@@ -14,9 +20,15 @@ from core.contracts.skills import (
 HEADING_RE = re.compile(r"^\s*#\s+(?P<title>.+?)\s*$", re.MULTILINE)
 
 
+CLASSIFIED_SKILL_ROOTS = frozenset({"behavior", "knowledge"})
+BEHAVIOR_SKILL_TYPES = frozenset({"persona", "policy"})
+
+
 def build_skill_id(path: Path, skills_root: Path) -> str:
     relative = path.relative_to(skills_root)
     parts = list(relative.with_suffix("").parts)
+    if parts and parts[0] in CLASSIFIED_SKILL_ROOTS:
+        parts = parts[1:]
     return ".".join(part.strip() for part in parts if part.strip())
 
 
@@ -26,10 +38,11 @@ def parse_skill_file(path: Path, skills_root: Path) -> SkillDefinition:
     metadata = parse_frontmatter(frontmatter)
     skill_id = build_skill_id(path, skills_root)
     source = str(path.relative_to(skills_root)).replace("\\", "/")
+    skill_class = infer_skill_class(path, skills_root, metadata)
 
     title = str(metadata.get("title") or extract_title(body) or path.stem.replace("_", " ").title()).strip()
-    skill_type = str(metadata.get("type") or "knowledge").strip().lower()
-    mode = str(metadata.get("mode") or "auto").strip().lower()
+    skill_type = str(metadata.get("type") or _default_skill_type(skill_class)).strip().lower()
+    mode = str(metadata.get("mode") or _default_skill_mode(skill_class)).strip().lower()
     summary = str(metadata.get("summary") or extract_summary(body)).strip()
     tags = tuple(_coerce_string_list(metadata.get("tags")))
     triggers = tuple(_coerce_string_list(metadata.get("triggers")))
@@ -38,6 +51,13 @@ def parse_skill_file(path: Path, skills_root: Path) -> SkillDefinition:
 
     if not title:
         raise ValueError("Skill {skill_id} is missing a title.".format(skill_id=skill_id))
+    if skill_class not in VALID_SKILL_CLASSES:
+        raise ValueError(
+            "Skill {skill_id} has unsupported class: {skill_class}".format(
+                skill_id=skill_id,
+                skill_class=skill_class,
+            )
+        )
     if skill_type not in VALID_SKILL_TYPES:
         raise ValueError(
             "Skill {skill_id} has unsupported type: {skill_type}".format(
@@ -60,6 +80,7 @@ def parse_skill_file(path: Path, skills_root: Path) -> SkillDefinition:
         source=source,
         path=path,
         title=title,
+        skill_class=skill_class,
         skill_type=skill_type,
         summary=summary,
         tags=tags,
@@ -69,6 +90,38 @@ def parse_skill_file(path: Path, skills_root: Path) -> SkillDefinition:
         requires_tools=requires_tools,
         body=body.strip(),
     )
+
+
+def infer_skill_class(path: Path, skills_root: Path, metadata: Dict[str, Any]) -> str:
+    relative = path.relative_to(skills_root)
+    parts = [part.strip().lower() for part in relative.with_suffix("").parts if part.strip()]
+    if parts:
+        root = parts[0]
+        if root in CLASSIFIED_SKILL_ROOTS:
+            return root
+        if root == "uploads":
+            return "knowledge"
+
+    skill_type = str(metadata.get("type") or "").strip().lower()
+    if skill_type in BEHAVIOR_SKILL_TYPES:
+        return "behavior"
+
+    mode = str(metadata.get("mode") or "").strip().lower()
+    if mode == "always_on":
+        return "behavior"
+    return "knowledge"
+
+
+def _default_skill_type(skill_class: str) -> str:
+    if skill_class == "behavior":
+        return "persona"
+    return "knowledge"
+
+
+def _default_skill_mode(skill_class: str) -> str:
+    if skill_class == "behavior":
+        return "always_on"
+    return "auto"
 
 
 def split_frontmatter(content: str) -> Tuple[str, str]:

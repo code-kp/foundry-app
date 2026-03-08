@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/execution/direct/test_runtime.py
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,13 +18,16 @@ from google.genai import types
 import core.contracts.agent as contracts_agent
 import core.contracts.execution as contracts_execution
 import core.contracts.hooks as contracts_hooks
+import core.contracts.memory as contracts_memory
 import core.contracts.tools as contracts_tools
 import core.guardrails as guardrails_module
+import core.memory as memory_module
 import core.registry as registry
 import core.execution.shared.adk as runtime_adk
 import core.execution.direct.prompts as runtime_prompts
 import core.execution.shared.tooling as runtime_tooling
 import core.execution.shared.types as runtime_types
+import core.execution.shared.usage as runtime_usage
 import core.skills.context as skills_context
 import core.skills.resolver as skills_resolver
 import core.skills.store as skills_store
@@ -36,6 +44,7 @@ class DirectAgentRuntime:
         self.record = record
         self.definition = registry.Register.get(contracts_agent.Agent, record.agent_name)
         self.execution: contracts_execution.ExecutionConfig = self.definition.execution
+        self.memory: contracts_memory.MemoryConfig = self.definition.memory
         self.hooks: contracts_hooks.AgentHooks = self.definition.hooks
         self.model_name, self._model_source = self._resolve_model_name()
         self.model_timeout_seconds = self._resolve_model_timeout_seconds()
@@ -56,8 +65,21 @@ class DirectAgentRuntime:
             "tool_guardrails_{agent_id}".format(agent_id=record.agent_id.replace(".", "_")),
             default=None,
         )
+        self._conversation_history: contextvars.ContextVar[list[dict[str, str]]] = contextvars.ContextVar(
+            "conversation_history_{agent_id}".format(agent_id=record.agent_id.replace(".", "_")),
+            default=[],
+        )
+        self._conversation_memory: contextvars.ContextVar[memory_module.MemorySnapshot] = contextvars.ContextVar(
+            "conversation_memory_{agent_id}".format(agent_id=record.agent_id.replace(".", "_")),
+            default=memory_module.MemorySnapshot(),
+        )
         self.skill_store = self._load_skill_store()
         self.skill_resolver = skills_resolver.SkillResolver(self.skill_store)
+        self.memory_manager = memory_module.MemoryManager(
+            agent_id=self.record.agent_id,
+            model_name=self.model_name,
+            config=self.memory,
+        )
         self._session_service = InMemorySessionService()
         self._session_keys = set()
         self._tool_callables = self._build_tool_callables()
@@ -118,7 +140,12 @@ class DirectAgentRuntime:
         )
 
     def _before_model_callback(self, callback_context: Any, llm_request: Any) -> Any:
-        runtime_prompts.apply_runtime_context(llm_request, self._resolved_skills.get())
+        runtime_prompts.apply_runtime_context(
+            llm_request,
+            self._resolved_skills.get(),
+            conversation_history=self._conversation_history.get(),
+            memory_snapshot=self._conversation_memory.get(),
+        )
         return None
 
     def _missing_credentials_message(self) -> str:
@@ -183,6 +210,7 @@ class DirectAgentRuntime:
         message: str,
         error: str,
         assistant_text: str = "",
+        usage: Optional[dict[str, Any]] = None,
     ) -> None:
         await stream_progress.emit_thinking_step(
             step_id="answer",
@@ -197,6 +225,7 @@ class DirectAgentRuntime:
                 {
                     "agent_id": self.record.agent_id,
                     "text": assistant_text.strip(),
+                    "usage": usage,
                 },
             )
         await stream.emit(
@@ -227,11 +256,22 @@ class DirectAgentRuntime:
         message: str,
         user_id: str,
         session_id: Optional[str] = None,
+        history: Optional[list[dict[str, Any]]] = None,
+        stream: bool = True,
     ):
         active_session_id = session_id or str(uuid4())
-        stream = stream_progress.EventStream()
-        asyncio.create_task(self._run_chat(stream, message, user_id, active_session_id))
-        return active_session_id, stream.sse_messages()
+        event_stream = stream_progress.EventStream()
+        asyncio.create_task(
+            self._run_chat(
+                stream=event_stream,
+                message=message,
+                user_id=user_id,
+                session_id=active_session_id,
+                history=history or [],
+                stream_output=stream,
+            )
+        )
+        return active_session_id, event_stream.sse_messages()
 
     async def _run_chat(
         self,
@@ -239,12 +279,17 @@ class DirectAgentRuntime:
         message: str,
         user_id: str,
         session_id: str,
+        history: Optional[list[dict[str, Any]]] = None,
+        stream_output: bool = True,
     ) -> None:
         stream_token = stream_progress.bind_progress_stream(stream)
         resolved_token: Optional[contextvars.Token] = None
         tool_guardrails_token: Optional[contextvars.Token] = None
         skill_store_token: Optional[contextvars.Token] = None
+        history_token: Optional[contextvars.Token] = None
+        memory_token: Optional[contextvars.Token] = None
         assistant_buffer = ""
+        usage_aggregator = runtime_usage.UsageAggregator()
         hook_state = self.hooks.create_turn_state(
             agent_id=self.record.agent_id,
             user_id=user_id,
@@ -255,12 +300,21 @@ class DirectAgentRuntime:
         try:
             skill_store_token = skills_context.bind_skill_store(self.skill_store)
             tool_guardrails_token = self._tool_guardrails.set(guardrails_module.ToolLoopGuardrails(self.execution))
+            history_token = self._conversation_history.set(runtime_prompts.normalize_conversation_history(history or []))
             await self.ensure_session(user_id=user_id, session_id=session_id)
+            memory_snapshot = await self.memory_manager.prepare_turn(
+                user_id=user_id,
+                session_id=session_id,
+                seed_history=self._conversation_history.get(),
+            )
+            memory_token = self._conversation_memory.set(memory_snapshot)
             resolved_context = await self._prepare_turn(
                 stream=stream,
                 message=message,
                 user_id=user_id,
                 session_id=session_id,
+                history=self._conversation_history.get(),
+                memory_snapshot=memory_snapshot,
             )
             resolved_token = self._resolved_skills.set(resolved_context)
 
@@ -272,6 +326,7 @@ class DirectAgentRuntime:
                     message=message_text,
                     error="GOOGLE_API_KEY missing",
                     assistant_text=message_text,
+                    usage=usage_aggregator.summary(),
                 )
                 return
 
@@ -282,7 +337,18 @@ class DirectAgentRuntime:
                 session_id=session_id,
                 resolved_context=resolved_context,
                 hook_state=hook_state,
+                stream_output=stream_output,
+                usage_aggregator=usage_aggregator,
             )
+            final_response_text = str(hook_state.get("_final_response_text") or "").strip()
+            if self.memory.enabled and final_response_text:
+                updated_memory = await self.memory_manager.record_turn(
+                    user_id=user_id,
+                    session_id=session_id,
+                    user_message=message,
+                    assistant_message=final_response_text,
+                )
+                self._conversation_memory.set(updated_memory)
             await stream.emit(
                 "run_completed",
                 {
@@ -300,6 +366,7 @@ class DirectAgentRuntime:
                 message=message_text,
                 error="model_timeout",
                 assistant_text="" if assistant_buffer.strip() else message_text,
+                usage=usage_aggregator.summary(),
             )
         except Exception as exc:
             message_text = stream_messages.build_error_message(str(exc))
@@ -307,8 +374,9 @@ class DirectAgentRuntime:
                 stream,
                 session_id=session_id,
                 message=message_text,
-                    error=str(exc),
-                    assistant_text="" if assistant_buffer.strip() else message_text,
+                error=str(exc),
+                assistant_text="" if assistant_buffer.strip() else message_text,
+                usage=usage_aggregator.summary(),
             )
         finally:
             if resolved_token is not None:
@@ -317,6 +385,10 @@ class DirectAgentRuntime:
                 self._tool_guardrails.reset(tool_guardrails_token)
             if skill_store_token is not None:
                 skills_context.reset_skill_store(skill_store_token)
+            if history_token is not None:
+                self._conversation_history.reset(history_token)
+            if memory_token is not None:
+                self._conversation_memory.reset(memory_token)
             stream_progress.reset_progress_stream(stream_token)
             await stream.close()
 
@@ -327,6 +399,8 @@ class DirectAgentRuntime:
         message: str,
         user_id: str,
         session_id: str,
+        history: list[dict[str, str]],
+        memory_snapshot: memory_module.MemorySnapshot,
     ) -> skills_resolver.ResolvedSkillContext:
         await stream.emit(
             "run_started",
@@ -344,6 +418,22 @@ class DirectAgentRuntime:
             state="running",
             agent_id=self.record.agent_id,
         )
+        if history:
+            await stream_progress.emit_thinking_step(
+                step_id="conversation_context",
+                label="Reviewing earlier messages",
+                detail="Using recent conversation context so follow-up questions stay grounded.",
+                state="done",
+                agent_id=self.record.agent_id,
+            )
+        if self.memory.enabled and not memory_snapshot.is_empty:
+            await stream_progress.emit_thinking_step(
+                step_id="conversation_memory",
+                label="Using compact conversation memory",
+                detail="Carrying forward the important earlier facts and decisions without replaying the full transcript.",
+                state="done",
+                agent_id=self.record.agent_id,
+            )
         resolved_context = await asyncio.to_thread(self._resolve_skills, message, user_id)
         await stream_progress.emit_debug_event(
             "skill_context_selected",
@@ -386,6 +476,8 @@ class DirectAgentRuntime:
         session_id: str,
         resolved_context: skills_resolver.ResolvedSkillContext,
         hook_state: contracts_hooks.HookState,
+        stream_output: bool,
+        usage_aggregator: runtime_usage.UsageAggregator,
     ) -> str:
         await stream.emit(
             "model_started",
@@ -423,6 +515,7 @@ class DirectAgentRuntime:
                     user_id=user_id,
                     session_id=session_id,
                     new_message=user_content,
+                    stream_output=stream_output,
                 ):
                     assistant_buffer = await self._handle_runner_event(
                         stream=stream,
@@ -431,6 +524,8 @@ class DirectAgentRuntime:
                         resolved_context=resolved_context,
                         assistant_buffer=assistant_buffer,
                         hook_state=hook_state,
+                        stream_output=stream_output,
+                        usage_aggregator=usage_aggregator,
                     )
         finally:
             heartbeat_task.cancel()
@@ -448,10 +543,13 @@ class DirectAgentRuntime:
         resolved_context: skills_resolver.ResolvedSkillContext,
         assistant_buffer: str,
         hook_state: contracts_hooks.HookState,
+        stream_output: bool,
+        usage_aggregator: runtime_usage.UsageAggregator,
     ) -> str:
         text = runtime_adk.extract_text(event)
         function_calls = list(event.get_function_calls() or [])
         function_responses = list(event.get_function_responses() or [])
+        usage_aggregator.record_event(event)
 
         await self._emit_tool_call_events(
             function_calls=function_calls,
@@ -473,18 +571,23 @@ class DirectAgentRuntime:
                 state="running",
                 agent_id=self.record.agent_id,
             )
-            await stream.emit(
-                "assistant_delta",
-                {
-                    "agent_id": self.record.agent_id,
-                    "text": text,
-                },
-            )
+            if stream_output:
+                await stream.emit(
+                    "assistant_delta",
+                    {
+                        "agent_id": self.record.agent_id,
+                        "text": text,
+                    },
+                )
             return assistant_buffer
 
         if event.is_final_response() and (text or assistant_buffer):
-            final_text = "{buffer}{tail}".format(buffer=assistant_buffer, tail=text).strip()
+            final_text = runtime_adk.merge_streamed_text(
+                streamed_text=assistant_buffer,
+                final_event_text=text,
+            ).strip()
             final_text = self.hooks.finalize_response(text=final_text, state=hook_state)
+            hook_state["_final_response_text"] = final_text
             await stream_progress.emit_thinking_step(
                 step_id="answer",
                 label="Answer ready",
@@ -497,6 +600,7 @@ class DirectAgentRuntime:
                 {
                     "agent_id": self.record.agent_id,
                     "text": final_text,
+                    "usage": usage_aggregator.summary(),
                 },
             )
             return ""
@@ -570,6 +674,8 @@ class DirectAgentRuntime:
         return self.skill_resolver.resolve(
             query=query,
             user_id=user_id,
+            behavior_skill_ids=self.definition.behavior_skills,
+            knowledge_skill_ids=self.definition.knowledge_skills,
             skill_scopes=self.definition.skill_scopes,
             always_on_skill_ids=self.definition.always_on_skills,
         )

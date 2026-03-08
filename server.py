@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/test_server.py
+"""
+
 from __future__ import annotations
 
 from typing import List, Optional
@@ -8,8 +13,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from api import service
+from services.ai import AiService, AiServiceError
 
 app = FastAPI(title="Agent Hub Server")
+ai_service = AiService(service)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
@@ -25,6 +32,19 @@ class ChatRequest(BaseModel):
     agent_id: Optional[str] = None
     session_id: Optional[str] = None
     user_id: str = "browser-user"
+    history: Optional[List["HistoryMessage"]] = None
+    stream: bool = True
+
+
+class AiRequest(BaseModel):
+    agent_id: Optional[str] = None
+    instructions: str
+    message: str
+
+
+class HistoryMessage(BaseModel):
+    role: str
+    text: str
 
 
 def _parse_csv_field(value: Optional[str]) -> List[str]:
@@ -55,6 +75,8 @@ async def stream_chat(payload: ChatRequest) -> StreamingResponse:
             message=payload.message,
             user_id=payload.user_id,
             session_id=payload.session_id,
+            history=[item.model_dump() for item in payload.history] if payload.history else None,
+            stream=payload.stream,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
@@ -67,6 +89,26 @@ async def stream_chat(payload: ChatRequest) -> StreamingResponse:
         "X-Session-Id": session_id,
     }
     return StreamingResponse(stream, media_type="text/event-stream", headers=headers)
+
+
+@app.post("/api/ai")
+async def run_ai_request(payload: AiRequest) -> JSONResponse:
+    try:
+        text = await ai_service.generate_text(
+            agent_id=payload.agent_id,
+            instructions=payload.instructions,
+            message=payload.message,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except AiServiceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return JSONResponse(
+        {
+            "text": text,
+        }
+    )
 
 
 @app.post("/api/skills/upload")

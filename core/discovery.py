@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/test_discovery.py
+"""
+
 from __future__ import annotations
 
 import importlib
@@ -34,6 +39,8 @@ def _agent_fingerprint(definition: Agent) -> str:
             definition.name,
             definition.description,
             definition.system_prompt,
+            ",".join(sorted(str(item) for item in definition.behavior_skills)),
+            ",".join(sorted(str(item) for item in definition.knowledge_skills)),
             ",".join(sorted(str(item) for item in definition.skill_scopes)),
             ",".join(sorted(str(item) for item in definition.always_on_skills)),
             definition.skills_dir or "",
@@ -257,6 +264,7 @@ def _skill_fingerprint(definition: SkillDefinition) -> str:
             definition.id,
             definition.source,
             definition.title,
+            definition.skill_class,
             definition.skill_type,
             definition.summary,
             definition.mode,

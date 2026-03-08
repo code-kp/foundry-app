@@ -32,6 +32,7 @@ class OrchestratedController(BaseAgent):
     executor_agent: LlmAgent
     replanner_agent: LlmAgent
     verifier_agent: LlmAgent
+    writer_agent: LlmAgent
     execution_config: contracts_execution.ExecutionConfig
     agent_hooks: contracts_hooks.AgentHooks
 
@@ -90,7 +91,7 @@ class OrchestratedController(BaseAgent):
                     else orchestrated_models.Verification.model_validate(verification_payload)
                 )
                 ctx.session.state[VERIFICATION_STATE_KEY] = verification.model_dump(exclude_none=True)
-                if verification.ready and verification.answer.strip():
+                if verification.ready:
                     yield self._thinking_event(
                         ctx,
                         step_id="verify",
@@ -98,7 +99,15 @@ class OrchestratedController(BaseAgent):
                         detail=verification.rationale,
                         state="done",
                     )
-                    yield self._final_answer_event(ctx, verification.answer.strip())
+                    yield self._thinking_event(
+                        ctx,
+                        step_id="answer",
+                        label="Writing the answer",
+                        detail="Turning the verified evidence into the final response.",
+                        state="running",
+                    )
+                    async for event in self._stream_writer(ctx):
+                        yield event
                     return
 
                 if replan_count >= self.execution_config.max_replans or verification_rounds >= self.execution_config.max_verification_rounds:
@@ -344,6 +353,8 @@ class OrchestratedController(BaseAgent):
     def _fallback_answer(self, verification: orchestrated_models.Verification) -> str:
         if verification.answer.strip():
             return verification.answer.strip()
+        if verification.writer_brief.strip():
+            return verification.writer_brief.strip()
         if verification.missing_information:
             return (
                 "I could not fully verify the answer yet. Missing information: {items}.".format(
@@ -401,6 +412,50 @@ class OrchestratedController(BaseAgent):
             turn_complete=True,
             content=types.Content(role="model", parts=[types.Part(text=final_answer)]),
         )
+
+    async def _stream_writer(self, ctx: InvocationContext):
+        assembled_text = ""
+        async with aclosing(self.writer_agent.run_async(ctx)) as agen:
+            async for event in agen:
+                hook_state = self._hook_state(ctx)
+                for response in event.get_function_responses() or []:
+                    self.agent_hooks.on_tool_response(
+                        state=hook_state,
+                        tool_name=response.name,
+                        payload=response.response,
+                    )
+                ctx.session.state[HOOK_STATE_KEY] = hook_state
+
+                if event.author != self.writer_agent.name:
+                    continue
+
+                text = _event_text(event)
+                if getattr(event, "partial", False) and text:
+                    assembled_text += text
+                    yield Event(
+                        author=self.name,
+                        invocation_id=ctx.invocation_id,
+                        partial=True,
+                        content=types.Content(role="model", parts=[types.Part(text=text)]),
+                    )
+                    continue
+
+                if event.is_final_response() and (text or assembled_text):
+                    final_text = "{buffer}{tail}".format(buffer=assembled_text, tail=text).strip()
+                    yield self._final_answer_event(ctx, final_text)
+                    return
+
+        verification_payload = ctx.session.state.get(VERIFICATION_STATE_KEY) or {}
+        verification = (
+            orchestrated_models.Verification.model_validate(verification_payload)
+            if verification_payload
+            else orchestrated_models.Verification(
+                ready=False,
+                rationale="Writer returned no final text.",
+            )
+        )
+        fallback = verification.answer.strip() or verification.writer_brief.strip() or self._fallback_answer(verification)
+        yield self._final_answer_event(ctx, fallback)
 
 
 def build_orchestrated_controller(
@@ -472,7 +527,7 @@ def build_orchestrated_controller(
     )
     verifier_agent = LlmAgent(
         name="{name}_verifier".format(name=agent_name),
-        description="Checks whether the evidence is enough and drafts the final answer.",
+        description="Checks whether the evidence is enough and prepares final-answer guidance.",
         model=model_name,
         instruction=lambda ctx: orchestrated_prompts.verifier_instruction(
             agent_name=agent_name,
@@ -488,6 +543,22 @@ def build_orchestrated_controller(
         output_key=VERIFIER_OUTPUT_KEY,
         before_model_callback=before_model_callback,
     )
+    writer_agent = LlmAgent(
+        name="{name}_writer".format(name=agent_name),
+        description="Streams the final user-facing answer from the verified evidence.",
+        model=model_name,
+        instruction=lambda ctx: orchestrated_prompts.writer_instruction(
+            agent_name=agent_name,
+            system_prompt=system_prompt,
+            ctx=ctx,
+            hook_guidance=agent_hooks.build_prompt_guidance(
+                phase="writer",
+                state=_hook_state_from_context(ctx),
+            ),
+        ),
+        include_contents="none",
+        before_model_callback=before_model_callback,
+    )
     return OrchestratedController(
         name=agent_name,
         description=description,
@@ -495,9 +566,10 @@ def build_orchestrated_controller(
         executor_agent=executor_agent,
         replanner_agent=replanner_agent,
         verifier_agent=verifier_agent,
+        writer_agent=writer_agent,
         execution_config=execution_config,
         agent_hooks=agent_hooks,
-        sub_agents=[planner_agent, executor_agent, replanner_agent, verifier_agent],
+        sub_agents=[planner_agent, executor_agent, replanner_agent, verifier_agent, writer_agent],
     )
 
 

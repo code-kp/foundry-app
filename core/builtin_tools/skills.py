@@ -42,12 +42,12 @@ class SearchSkillsTool(ToolModule):
 @register_tool_class
 class ListSkillFilesTool(ToolModule):
     name = "list_skill_files"
-    description = "List discovered skills with their ids, types, and summaries."
+    description = "List discovered skills with their ids, classes, and summaries."
     category = "internal_guidance"
     use_when = (
         "You need to inspect what internal guidance exists before selecting one.",
     )
-    returns = "A list of discovered skills with ids, types, modes, and summaries."
+    returns = "A list of discovered skills with ids, classes, and summaries."
 
     def run(self) -> dict:
         store = current_skill_store()
@@ -100,6 +100,7 @@ class ReadSkillFileTool(ToolModule):
             "skill": {
                 "id": skill.id,
                 "title": skill.title,
+                "class": skill.skill_class,
                 "type": skill.skill_type,
                 "summary": skill.summary,
                 "mode": skill.mode,

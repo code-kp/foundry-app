@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/test_api.py
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -81,7 +86,7 @@ class AgentApi:
         tags: Optional[Iterable[str]] = None,
         triggers: Optional[Iterable[str]] = None,
         priority: int = 60,
-    ) -> Dict[str, Any]:
+        ) -> Dict[str, Any]:
         return self.platform.upload_skill_markdown(
             file_name=file_name,
             content=content,
@@ -103,12 +108,14 @@ class AgentApi:
         agent_id: Optional[str] = None,
         user_id: str = "api-user",
         session_id: Optional[str] = None,
+        stream: bool = True,
     ) -> Tuple[str, str, AsyncIterator[Dict[str, Any]]]:
         resolved_agent_id, next_session_id, raw_stream = await self.platform.stream_chat(
             agent_id=agent_id,
             message=message,
             user_id=user_id,
             session_id=session_id,
+            stream=stream,
         )
 
         async def iterate_events() -> AsyncIterator[Dict[str, Any]]:
@@ -126,12 +133,14 @@ class AgentApi:
         agent_id: Optional[str] = None,
         user_id: str = "api-user",
         session_id: Optional[str] = None,
+        stream: bool = True,
     ) -> ChatResult:
         resolved_agent_id, next_session_id, events_iter = await self.stream_chat_events(
             message=message,
             agent_id=agent_id,
             user_id=user_id,
             session_id=session_id,
+            stream=stream,
         )
 
         events: List[Dict[str, Any]] = []

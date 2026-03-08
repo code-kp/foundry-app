@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/contracts/test_skills.py
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,6 +13,7 @@ from typing import Iterable, List, Optional, Sequence
 from core.registry import Register
 
 
+VALID_SKILL_CLASSES = frozenset({"behavior", "knowledge"})
 VALID_SKILL_TYPES = frozenset({"persona", "policy", "workflow", "knowledge"})
 VALID_SKILL_MODES = frozenset({"always_on", "auto", "manual"})
 
@@ -22,6 +28,7 @@ class SkillDefinition:
     title: str
     skill_type: str
     summary: str
+    skill_class: str = "knowledge"
     tags: tuple[str, ...] = ()
     triggers: tuple[str, ...] = ()
     mode: str = "auto"
@@ -40,6 +47,14 @@ class SkillDefinition:
         if "*" not in normalized and (self.id == normalized or self.id.startswith(normalized + ".")):
             return True
         return False
+
+    @property
+    def is_behavior(self) -> bool:
+        return self.skill_class == "behavior"
+
+    @property
+    def is_knowledge(self) -> bool:
+        return self.skill_class == "knowledge"
 
 
 def normalize_skill_scope(value: str) -> str:
@@ -84,4 +99,3 @@ def register_skills(skill_definitions: Iterable[SkillDefinition]) -> List[SkillD
     for item in skill_definitions:
         registered.append(register_skill(item))
     return registered
-

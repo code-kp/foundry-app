@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/skills/test_resolver.py
+"""
+
 from __future__ import annotations
 
 from collections import Counter
@@ -40,13 +45,28 @@ class SkillResolver:
         *,
         query: str,
         user_id: str,
-        skill_scopes: Sequence[str],
+        behavior_skill_ids: Sequence[str] = (),
+        knowledge_skill_ids: Sequence[str] = (),
+        skill_scopes: Sequence[str] = (),
         always_on_skill_ids: Sequence[str] = (),
         max_auto_skills: int = 3,
         max_chunks: int = 4,
         max_chunk_chars: int = 1600,
     ) -> ResolvedSkillContext:
         self.store.refresh()
+        explicit_behavior_ids = set(ensure_skill_ids(behavior_skill_ids))
+        explicit_knowledge_ids = set(ensure_skill_ids(knowledge_skill_ids))
+        if explicit_behavior_ids or explicit_knowledge_ids:
+            return self._resolve_explicit(
+                query=query,
+                user_id=user_id,
+                behavior_skill_ids=explicit_behavior_ids,
+                knowledge_skill_ids=explicit_knowledge_ids,
+                max_auto_skills=max_auto_skills,
+                max_chunks=max_chunks,
+                max_chunk_chars=max_chunk_chars,
+            )
+
         scopes = ensure_skill_scopes(skill_scopes)
         shared_scopes = ensure_skill_scopes((build_user_upload_scope(user_id),))
         explicit_always_on = set(ensure_skill_ids(always_on_skill_ids))
@@ -97,6 +117,75 @@ class SkillResolver:
             selected_skills=tuple(selected_skills),
             chunks=tuple(chunks),
         )
+
+    def _resolve_explicit(
+        self,
+        *,
+        query: str,
+        user_id: str,
+        behavior_skill_ids: set[str],
+        knowledge_skill_ids: set[str],
+        max_auto_skills: int,
+        max_chunks: int,
+        max_chunk_chars: int,
+    ) -> ResolvedSkillContext:
+        always_on = self._resolve_explicit_skills(behavior_skill_ids, expected_class="behavior")
+        knowledge_candidates = self._resolve_explicit_skills(knowledge_skill_ids, expected_class="knowledge")
+        knowledge_candidates.extend(self._resolve_user_upload_knowledge(user_id))
+
+        always_on_ids = {skill.id for skill in always_on}
+        scored_candidates: List[tuple[float, SkillDefinition]] = []
+        for skill in knowledge_candidates:
+            if skill.id in always_on_ids:
+                continue
+            score = self._score_skill(skill, query)
+            if score <= 0:
+                continue
+            scored_candidates.append((score, skill))
+
+        scored_candidates.sort(key=lambda item: (-item[0], -item[1].priority, item[1].id))
+        selected_skills = [skill for _, skill in scored_candidates[:max_auto_skills]]
+        selected_ids = {skill.id for skill in selected_skills}
+        chunk_skill_ids = list(always_on_ids | selected_ids)
+        chunks = self.store.select_relevant_chunks(
+            query=query,
+            max_chunks=max_chunks,
+            max_chars=max_chunk_chars,
+            skill_ids=chunk_skill_ids,
+        )
+        return ResolvedSkillContext(
+            always_on_skills=tuple(always_on),
+            selected_skills=tuple(selected_skills),
+            chunks=tuple(chunks),
+        )
+
+    def _resolve_explicit_skills(
+        self,
+        skill_ids: set[str],
+        *,
+        expected_class: str,
+    ) -> list[SkillDefinition]:
+        resolved: list[SkillDefinition] = []
+        seen = set()
+        for skill_id in skill_ids:
+            skill = self.store.get_skill(skill_id)
+            if skill is None or skill.id in seen:
+                continue
+            if skill.skill_class != expected_class:
+                continue
+            resolved.append(skill)
+            seen.add(skill.id)
+        return resolved
+
+    def _resolve_user_upload_knowledge(self, user_id: str) -> list[SkillDefinition]:
+        upload_scope = build_user_upload_scope(user_id)
+        resolved: list[SkillDefinition] = []
+        for skill in self.store.list_skills():
+            if skill.skill_class != "knowledge":
+                continue
+            if skill.matches_scope(upload_scope):
+                resolved.append(skill)
+        return resolved
 
     def _score_skill(self, skill: SkillDefinition, query: str) -> float:
         query_tokens = self.store._tokenize(query)  # intentional shared normalization
@@ -174,6 +263,7 @@ def serialize_resolved_skills(context: ResolvedSkillContext) -> List[Dict[str, s
             {
                 "id": skill.id,
                 "title": skill.title,
+                "class": skill.skill_class,
                 "type": skill.skill_type,
                 "mode": skill.mode,
                 "summary": skill.summary,

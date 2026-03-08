@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/workspace/agents/web/test_hooks.py
+"""
+
 from __future__ import annotations
 
 import re
@@ -26,7 +31,7 @@ class WebCitationHooks(contracts_hooks.AgentHooks):
         phase: str,
         state: contracts_hooks.HookState,
     ) -> str:
-        if phase != "verifier":
+        if phase not in {"verifier", "writer"}:
             return ""
 
         source_urls = list(state.get("source_urls") or [])

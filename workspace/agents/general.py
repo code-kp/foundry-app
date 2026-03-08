@@ -14,5 +14,5 @@ class GeneralAssistant(AgentModule):
     tools = (
         "get_current_utc_time",
     )
-    skill_scopes = ("general",)
-    always_on_skills = ("general.persona",)
+    behavior = ("general.persona",)
+    knowledge = ("general.product",)

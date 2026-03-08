@@ -28,6 +28,7 @@ class Verification(BaseModel):
     ready: bool
     rationale: str = Field(min_length=1)
     answer: str = ""
+    writer_brief: str = ""
     missing_information: list[str] = Field(default_factory=list)
 
 

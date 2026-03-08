@@ -14,5 +14,5 @@ class SupportTriage(AgentModule):
     tools = (
         "get_current_utc_time",
     )
-    skill_scopes = ("support", "general.product")
-    always_on_skills = ("support.persona", "support.policy")
+    behavior = ("support.persona", "support.policy")
+    knowledge = ("support.triage", "general.product")

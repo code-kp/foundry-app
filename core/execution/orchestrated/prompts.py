@@ -137,7 +137,8 @@ def verifier_instruction(
         "Follow this agent behavior guidance when producing the final answer:",
         system_prompt.strip(),
         "Decide whether the gathered evidence is enough to answer the user completely and accurately.",
-        "If ready, produce the final user-facing answer.",
+        "Do not write the final user-facing answer in this step.",
+        "If ready, explain why the evidence is sufficient and provide a short writing brief in writer_brief.",
         "If not ready, set ready=false and explain what is still missing.",
         "Return only structured verification data.",
         hook_guidance.strip(),
@@ -148,6 +149,54 @@ def verifier_instruction(
         lines.append(str(current_plan))
     if evidence:
         lines.append("Evidence gathered so far:")
+        for item in evidence[-8:]:
+            lines.append(
+                "- {title}: {summary}".format(
+                    title=str(item.get("title") or "Step"),
+                    summary=str(item.get("summary") or "").strip(),
+                )
+            )
+    return "\n".join(line for line in lines if line)
+
+
+def writer_instruction(
+    *,
+    agent_name: str,
+    system_prompt: str,
+    ctx: ReadonlyContext,
+    hook_guidance: str = "",
+) -> str:
+    state = ctx.state
+    evidence = state.get("orchestrated:evidence") or []
+    verification_payload = state.get("orchestrated:verification") or {}
+    verification = (
+        orchestrated_models.Verification.model_validate(verification_payload)
+        if verification_payload
+        else orchestrated_models.Verification(
+            ready=False,
+            rationale="No verification state is available yet.",
+        )
+    )
+
+    lines = [
+        "You are the final response writer for {agent_name}.".format(agent_name=agent_name),
+        "Follow this agent behavior guidance while writing the response:",
+        system_prompt.strip(),
+        "Write the final user-facing answer now.",
+        "Use the verified evidence and the writing brief below.",
+        "Do not mention planning, verification, or internal workflow.",
+        "Return only the final answer text.",
+        hook_guidance.strip(),
+        current_user_block(ctx),
+    ]
+    if verification.writer_brief.strip():
+        lines.append("Writing brief:")
+        lines.append(verification.writer_brief.strip())
+    if verification.rationale.strip():
+        lines.append("Verified basis:")
+        lines.append(verification.rationale.strip())
+    if evidence:
+        lines.append("Verified evidence:")
         for item in evidence[-8:]:
             lines.append(
                 "- {title}: {summary}".format(

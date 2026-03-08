@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/skills/test_uploads.py
+"""
+
 from __future__ import annotations
 
 import re

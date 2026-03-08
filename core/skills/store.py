@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/skills/test_store.py
+"""
+
 from __future__ import annotations
 
 import math
@@ -92,6 +97,7 @@ class SkillStore:
             {
                 "id": skill.id,
                 "title": skill.title,
+                "class": skill.skill_class,
                 "type": skill.skill_type,
                 "mode": skill.mode,
                 "summary": skill.summary,

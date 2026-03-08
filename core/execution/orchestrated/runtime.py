@@ -1,3 +1,8 @@
+"""
+Tests:
+- tests/core/execution/orchestrated/test_runtime.py
+"""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,6 +12,7 @@ from google.adk.events import Event
 import core.execution.shared.adk as runtime_adk
 import core.execution.orchestrated.controller as orchestrated_controller
 import core.execution.direct.runtime as direct_runtime
+import core.execution.shared.usage as runtime_usage
 import core.stream.progress as stream_progress
 
 
@@ -33,9 +39,12 @@ class OrchestratedAgentRuntime(direct_runtime.DirectAgentRuntime):
         resolved_context,
         assistant_buffer: str,
         hook_state,
+        stream_output: bool,
+        usage_aggregator: runtime_usage.UsageAggregator,
     ) -> str:
         function_calls = list(event.get_function_calls() or [])
         function_responses = list(event.get_function_responses() or [])
+        usage_aggregator.record_event(event)
 
         await self._emit_tool_call_events(
             function_calls=function_calls,
@@ -57,17 +66,21 @@ class OrchestratedAgentRuntime(direct_runtime.DirectAgentRuntime):
         text = runtime_adk.extract_text(event)
         if getattr(event, "partial", False) and text:
             assistant_buffer += text
-            await stream.emit(
-                "assistant_delta",
-                {
-                    "agent_id": self.record.agent_id,
-                    "text": text,
-                },
-            )
+            if stream_output:
+                await stream.emit(
+                    "assistant_delta",
+                    {
+                        "agent_id": self.record.agent_id,
+                        "text": text,
+                    },
+                )
             return assistant_buffer
 
         if event.is_final_response() and (text or assistant_buffer):
-            final_text = "{buffer}{tail}".format(buffer=assistant_buffer, tail=text).strip()
+            final_text = runtime_adk.merge_streamed_text(
+                streamed_text=assistant_buffer,
+                final_event_text=text,
+            ).strip()
             await stream_progress.emit_thinking_step(
                 step_id="answer",
                 label="Answer ready",
@@ -80,6 +93,7 @@ class OrchestratedAgentRuntime(direct_runtime.DirectAgentRuntime):
                 {
                     "agent_id": self.record.agent_id,
                     "text": final_text,
+                    "usage": usage_aggregator.summary(),
                 },
             )
             return ""

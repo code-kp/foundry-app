@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Iterable, List, Optional, Tuple
 
+import core.contracts.models as contract_models
 from core.platform import AgentPlatform
 
 
@@ -70,6 +71,22 @@ class AgentApi:
     def catalog(self) -> Dict[str, Any]:
         return self.platform.catalog()
 
+    def list_available_models(self) -> Dict[str, Any]:
+        return {
+            "models": contract_models.serialize_available_models(),
+        }
+
+    def resolve_model_name(
+        self,
+        *,
+        model_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+    ) -> Optional[str]:
+        return contract_models.resolve_model_selection(
+            model_id=model_id,
+            model_name=model_name,
+        )
+
     def list_agents(self) -> List[Dict[str, Any]]:
         return self.platform.list_agents()
 
@@ -91,26 +108,54 @@ class AgentApi:
             namespace=namespace,
         )
 
+    async def stream_chat(
+        self,
+        *,
+        agent_id: Optional[str],
+        mode: Optional[str],
+        model_name: Optional[str],
+        message: str,
+        user_id: str,
+        session_id: Optional[str],
+        history: Optional[List[Dict[str, Any]]] = None,
+        stream: bool = True,
+    ):
+        return await self.platform.stream_chat(
+            agent_id=agent_id,
+            mode=mode,
+            model_name=model_name,
+            message=message,
+            user_id=user_id,
+            session_id=session_id,
+            history=history,
+            stream=stream,
+        )
+
     async def stream_chat_events(
         self,
         *,
         message: str,
         agent_id: Optional[str] = None,
         mode: Optional[str] = None,
+        model_id: Optional[str] = None,
         model_name: Optional[str] = None,
         user_id: str = "api-user",
         session_id: Optional[str] = None,
         stream: bool = True,
     ) -> Tuple[str, str, str, AsyncIterator[Dict[str, Any]]]:
+        selected_model_name = self.resolve_model_name(
+            model_id=model_id,
+            model_name=model_name,
+        )
         (
             resolved_agent_id,
             resolved_mode,
             next_session_id,
             raw_stream,
-        ) = await self.platform.stream_chat(
+        ) = await self.stream_chat(
             agent_id=agent_id,
             mode=mode,
-            model_name=model_name,
+            model_name=selected_model_name,
             message=message,
             user_id=user_id,
             session_id=session_id,
@@ -131,6 +176,7 @@ class AgentApi:
         message: str,
         agent_id: Optional[str] = None,
         mode: Optional[str] = None,
+        model_id: Optional[str] = None,
         model_name: Optional[str] = None,
         user_id: str = "api-user",
         session_id: Optional[str] = None,
@@ -140,6 +186,7 @@ class AgentApi:
             message=message,
             agent_id=agent_id,
             mode=mode,
+            model_id=model_id,
             model_name=model_name,
             user_id=user_id,
             session_id=session_id,

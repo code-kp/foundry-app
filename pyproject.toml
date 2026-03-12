@@ -30,6 +30,7 @@ new-agent = "uv run foundry-new-agent --workspace-root src/workspace --workspace
 format = "ruff format ."
 test = "uv run python -m pytest tests/workspace"
 dev = "uv run poe backend"
+stop = "uv run python -m foundry_app.dev stop"
 embeddings-sync = "uv run foundry-sync-embeddings --workspace-root src/workspace --data-root ."
 
 [tool.pytest.ini_options]

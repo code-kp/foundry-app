@@ -35,6 +35,12 @@ uv run poe dev
 
 Both commands start the full app on `http://127.0.0.1:8000`.
 
+To stop a stale local process that still owns port `8000`:
+
+```bash
+uv run poe stop
+```
+
 The shared UI is served by `agentfoundry` through the same FastAPI process, so the app opens directly at `/`.
 
 ## Shared Web Development
@@ -51,6 +57,7 @@ VITE_API_BASE=http://127.0.0.1:8000
 - `uv run poe embeddings-sync`
 - `uv run poe test`
 - `uv run poe format`
+- `uv run poe stop`
 
 ## Notes
 

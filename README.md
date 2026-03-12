@@ -33,13 +33,13 @@ or
 uv run poe dev
 ```
 
-Both commands start the app API on `http://127.0.0.1:8000`.
+Both commands start the full app on `http://127.0.0.1:8000`.
 
-## Shared Web
+The shared UI is served by `agentfoundry` through the same FastAPI process, so the app opens directly at `/`.
 
-The shared web lives in `agentfoundry`.
+## Shared Web Development
 
-Use the frontend from that repo and point it at this app API with:
+If you are changing the shared frontend itself, run the Vite dev server from `agentfoundry` and point it at this app API with:
 
 ```bash
 VITE_API_BASE=http://127.0.0.1:8000

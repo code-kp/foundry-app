@@ -12,7 +12,7 @@ resolution-markers = [
 [[package]]
 name = "agentfoundry"
 version = "0.1.0"
-source = { git = "https://github.com/code-kp/agentfoundry.git?rev=main#0c071d48cdffc00294f4a5af2b5ab39fb893b378" }
+source = { git = "https://github.com/code-kp/agentfoundry.git?rev=main#3f14cb4ce49b83c757834955790a9755c04ee89c" }
 dependencies = [
     { name = "coverage", version = "7.10.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "coverage", version = "7.13.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },

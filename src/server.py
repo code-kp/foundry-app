@@ -1,11 +1,5 @@
-"""
-Tests:
-- tests/test_server.py
-"""
-
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, List, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -13,20 +7,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from api import api as service
-from api import service as platform_service
+from agent_foundry.api import create_runtime
 from core.execution.shared.request_context import (
     bind_conversation_id,
     reset_conversation_id,
 )
+from foundry_app.config import default_config
 from services.ai import AiService, AiServiceError
 from services.conversations import ConversationStore
 
-app = FastAPI(title="Agent Hub Server")
+
+CONFIG = default_config()
+platform_service, service = create_runtime(CONFIG)
 ai_service = AiService(platform_service)
 conversation_store = ConversationStore(
-    Path(__file__).resolve().parent.parent / ".conversations"
+    CONFIG.conversations_root,
+    embeddings_root=CONFIG.embeddings_root,
 )
+app = FastAPI(title="{name} Server".format(name=CONFIG.app_name))
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:3000", "http://localhost:3000"],
@@ -224,11 +222,7 @@ async def run_ai_request(payload: AiRequest) -> JSONResponse:
     except AiServiceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return JSONResponse(
-        {
-            "text": text,
-        }
-    )
+    return JSONResponse({"text": text})
 
 
 @app.post("/api/skills/upload")
@@ -276,3 +270,9 @@ async def upload_skill(
             },
         }
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)

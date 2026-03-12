@@ -17,6 +17,24 @@ Rules:
 Use [../core/README.md](../core/README.md) for platform internals.
 Use this file for contributor-facing authoring rules.
 
+## Fastest Way To Start
+
+Use the scaffold wizard when you want a working starter without hand-writing the files:
+
+```bash
+uv run poe new-agent
+```
+
+That command is deterministic. It does not call an LLM. It asks a few questions, then creates:
+
+- an agent module under `src/workspace/agents/`
+- an optional tool stub under `src/workspace/tools/`
+- optional behavior and knowledge skill stubs under `src/workspace/skills/`
+
+The wizard asks for a namespace path like `support/refunds` and derives the final module filename from the agent name, so contributors do not need to type the full agent id manually.
+
+The implementation lives outside the workspace in `scripts/create_agent_scaffold.py`, so the workspace stays focused on authored agent assets.
+
 ## Best Way To Define An Agent
 
 Recommended:

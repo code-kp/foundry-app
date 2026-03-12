@@ -14,7 +14,7 @@ Rules:
 - Skill files should live under either `skills/behavior/` or `skills/knowledge/`
 - Agents should use `behavior` and `knowledge`
 
-Use [../core/README.md](../core/README.md) for platform internals.
+Use the `agentfoundry` repository for platform internals.
 Use this file for contributor-facing authoring rules.
 
 ## Fastest Way To Start
@@ -33,7 +33,7 @@ That command is deterministic. It does not call an LLM. It asks a few questions,
 
 The wizard asks for a namespace path like `support/refunds` and derives the final module filename from the agent name, so contributors do not need to type the full agent id manually.
 
-The implementation lives outside the workspace in `scripts/create_agent_scaffold.py`, so the workspace stays focused on authored agent assets.
+The implementation lives outside the workspace in the `agentfoundry` CLI, so the workspace stays focused on authored agent assets.
 
 ## Best Way To Define An Agent
 

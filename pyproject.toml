@@ -1,29 +1,19 @@
 [project]
 name = "foundryapp"
 version = "0.1.0"
-description = "App repo for Foundry agents, workspace content, and bootstrap wiring."
+description = "Workspace repo for authored agents, tools, skills, and the app bootstrap."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
   "agentfoundry @ git+https://github.com/code-kp/agentfoundry.git@main",
-  "fastapi>=0.115.0",
-  "uvicorn[standard]>=0.30.0",
-  "google-adk>=1.18.0",
-  "litellm>=1.0.0",
-  "python-dotenv>=1.0.1",
-  "python-multipart>=0.0.9",
   "poethepoet>=0.32.0",
   "pytest>=8.3.5",
-  "coverage>=7.6.0",
   "ruff>=0.6.0",
 ]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-py-modules = ["api", "server"]
 
 [tool.setuptools.package-dir]
 "" = "src"
@@ -35,12 +25,12 @@ exclude = ["tests*"]
 namespaces = true
 
 [tool.poe.tasks]
-backend = "uvicorn server:app --app-dir src --reload --reload-dir src --reload-dir tests --reload-dir scripts --reload-include '*.py' --reload-exclude 'frontend/*' --reload-exclude '.venv/*' --reload-exclude '*/.venv/*' --reload-exclude 'venv/*' --reload-exclude '*/venv/*' --reload-exclude '*site-packages/*' --reload-exclude '__pycache__/*' --host 127.0.0.1 --port 8000"
-new-agent = "uv run python scripts/create_agent_scaffold.py"
+backend = "uvicorn foundry_app.app:app --app-dir src --reload --reload-dir src --reload-dir tests --reload-include '*.py' --reload-exclude '.venv/*' --reload-exclude '*/.venv/*' --reload-exclude 'venv/*' --reload-exclude '*/venv/*' --reload-exclude '*site-packages/*' --reload-exclude '__pycache__/*' --host 127.0.0.1 --port 8000"
+new-agent = "uv run foundry-new-agent --workspace-root src/workspace --workspace-package workspace"
 format = "ruff format ."
-test = "uv run python -m pytest"
-dev = "uvicorn server:app --app-dir src --reload --reload-dir src --reload-dir tests --reload-dir scripts --reload-include '*.py' --reload-exclude '.venv/*' --reload-exclude '*/.venv/*' --reload-exclude 'venv/*' --reload-exclude '*/venv/*' --reload-exclude '*site-packages/*' --reload-exclude '__pycache__/*' --host 127.0.0.1 --port 8000"
-embeddings-sync = "uv run python scripts/sync_embeddings.py"
+test = "uv run python -m pytest tests/workspace"
+dev = "uv run poe backend"
+embeddings-sync = "uv run foundry-sync-embeddings --workspace-root src/workspace --data-root ."
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

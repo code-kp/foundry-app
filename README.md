@@ -7,13 +7,13 @@ Foundry App is the app repo that owns the authored workspace:
 - skills
 - app bootstrap config
 
-The shared runtime, API factory, and shared web UI live in `agentfoundry`.
+The shared runtime, API/server layer, CLI tooling, and shared web UI live in `agentfoundry`.
 
 ## Structure
 
 - `src/workspace/`: authored agents, tools, and skills
-- `src/foundry_app/`: app bootstrap and config
-- `src/api.py` and `src/server.py`: compatibility entrypoints
+- `src/foundry_app/`: the minimal app bootstrap and config
+- `tests/workspace/`: workspace-only tests
 
 ## Install
 
@@ -33,7 +33,7 @@ or
 uv run poe dev
 ```
 
-The app API runs on `http://127.0.0.1:8000`.
+Both commands start the app API on `http://127.0.0.1:8000`.
 
 ## Shared Web
 
@@ -54,5 +54,5 @@ VITE_API_BASE=http://127.0.0.1:8000
 
 ## Notes
 
-- This repo is intentionally thinner than the original `agent-hub` repo.
-- The first split keeps the authored workspace here and moves the shared platform into `agentfoundry`.
+- This repo intentionally keeps only workspace code and the bootstrap needed to run it.
+- The earlier copied `scripts/` and server files were temporary compatibility scaffolding from the split and do not belong here.

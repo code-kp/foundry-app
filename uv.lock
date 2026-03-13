@@ -12,7 +12,7 @@ resolution-markers = [
 [[package]]
 name = "agentfoundry"
 version = "0.1.0"
-source = { git = "https://github.com/code-kp/agentfoundry.git?rev=main#27cea581ca55685b7b9de544cc2e9a3807d7d9db" }
+source = { git = "https://github.com/code-kp/agentfoundry.git?rev=main#554ddd678aa02576d95f462d0fc79a5d4af2b7cf" }
 dependencies = [
     { name = "coverage", version = "7.10.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "coverage", version = "7.13.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -36,7 +36,7 @@ dependencies = [
 [[package]]
 name = "agentfoundry-ui"
 version = "0.1.0"
-source = { git = "https://github.com/code-kp/agentfoundry-ui.git?rev=main#2d94cee76a1cc85923b517132a164b4a3bd65c41" }
+source = { git = "https://github.com/code-kp/agentfoundry-ui.git?rev=main#ae89120e392172cbbe38f2162ffd39bedcc22456" }
 dependencies = [
     { name = "fastapi", version = "0.128.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "fastapi", version = "0.135.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },

@@ -28,15 +28,9 @@ uv sync --all-groups --all-extras
 hey start
 ```
 
-or
+That command starts the full app on `http://127.0.0.1:8000`.
 
-```bash
-uv run hey start
-```
-
-Both commands start the full app on `http://127.0.0.1:8000`.
-
-The `hey` command is provided by the shared `agentfoundry` package and reads this repo's local `[tool.agentfoundry]` settings from `pyproject.toml`.
+`hey` is the only supported command surface in this repo. It is provided by the shared `agentfoundry` package and reads this repo's local `[tool.agentfoundry]` settings from `pyproject.toml`.
 
 To stop a stale local process that still owns port `8000`:
 

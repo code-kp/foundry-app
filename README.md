@@ -7,7 +7,8 @@ Foundry App is the app repo that owns the authored workspace:
 - skills
 - app bootstrap config
 
-The shared runtime, API/server layer, CLI tooling, and shared web UI live in `agentfoundry`.
+The shared runtime and API/server layer live in `agentfoundry`.
+The shared packaged UI lives in `agentfoundry-ui`.
 
 ## Structure
 
@@ -41,14 +42,14 @@ To stop a stale local process that still owns port `8000`:
 uv run poe stop
 ```
 
-The shared UI is served by `agentfoundry` through the same FastAPI process, so the app opens directly at `/`.
+This repo mounts the shared UI through the same FastAPI process, so the app opens directly at `/`.
 
 ## Shared Web Development
 
-If you are changing the shared frontend itself, run the Vite dev server from `agentfoundry` and point it at this app API with:
+If you are changing the shared frontend itself, work in `agentfoundry-ui` and point it at this app API with:
 
 ```bash
-VITE_API_BASE=http://127.0.0.1:8000
+VITE_API_BASE=http://127.0.0.1:8000 npm run dev -- --host 127.0.0.1 --port 3000
 ```
 
 ## Common Commands

@@ -6,7 +6,8 @@ This repository is the authored app layer for Foundry:
 - the app bootstrap in `src/foundry_app/`
 - workspace-focused tests in `tests/workspace/`
 
-The shared runtime, API/server layer, web UI, and CLI tooling live in the separate `agentfoundry` repository.
+The shared runtime, API/server layer, and CLI tooling live in the separate `agentfoundry` repository.
+The shared web UI lives in the separate `agentfoundry-ui` repository.
 
 ## Documentation Map
 
@@ -36,7 +37,12 @@ tests/
 - discovery and runtime creation
 - direct and orchestrated execution
 - server routes and conversation persistence
-- the shared frontend and CLI utilities
+- CLI utilities
+
+`agentfoundry-ui` owns reusable frontend behavior:
+
+- the shared React UI
+- the packaged static bundle mounted by app repos
 
 ## Where To Go Next
 

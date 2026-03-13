@@ -12,7 +12,7 @@ resolution-markers = [
 [[package]]
 name = "agentfoundry"
 version = "0.1.0"
-source = { git = "https://github.com/code-kp/agentfoundry.git?rev=main#d9ae7fc72c18e77f71ac4c432cc1405bd227ce4f" }
+source = { git = "https://github.com/code-kp/agentfoundry.git?rev=main#bc61bd4df4b1af5477f389abb09172d0d80ed54d" }
 dependencies = [
     { name = "coverage", version = "7.10.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "coverage", version = "7.13.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -32,6 +32,15 @@ dependencies = [
     { name = "ruff" },
     { name = "uvicorn", version = "0.39.0", source = { registry = "https://pypi.org/simple" }, extra = ["standard"], marker = "python_full_version < '3.10'" },
     { name = "uvicorn", version = "0.41.0", source = { registry = "https://pypi.org/simple" }, extra = ["standard"], marker = "python_full_version >= '3.10'" },
+]
+
+[[package]]
+name = "agentfoundry-ui"
+version = "0.1.0"
+source = { git = "https://github.com/code-kp/agentfoundry-ui.git?rev=main#2d94cee76a1cc85923b517132a164b4a3bd65c41" }
+dependencies = [
+    { name = "fastapi", version = "0.128.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "fastapi", version = "0.135.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
 ]
 
 [[package]]
@@ -1035,6 +1044,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "agentfoundry" },
+    { name = "agentfoundry-ui" },
     { name = "poethepoet", version = "0.37.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "poethepoet", version = "0.42.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "pytest", version = "8.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -1045,6 +1055,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "agentfoundry", git = "https://github.com/code-kp/agentfoundry.git?rev=main" },
+    { name = "agentfoundry-ui", git = "https://github.com/code-kp/agentfoundry-ui.git?rev=main" },
     { name = "poethepoet", specifier = ">=0.32.0" },
     { name = "pytest", specifier = ">=8.3.5" },
     { name = "ruff", specifier = ">=0.6.0" },

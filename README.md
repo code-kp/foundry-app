@@ -25,21 +25,23 @@ uv sync --all-groups --all-extras
 ## Run
 
 ```bash
-uv run poe backend
+hey start
 ```
 
 or
 
 ```bash
-uv run poe dev
+uv run hey start
 ```
 
 Both commands start the full app on `http://127.0.0.1:8000`.
 
+The `hey` command is provided by the shared `agentfoundry` package and reads this repo's local `[tool.agentfoundry]` settings from `pyproject.toml`.
+
 To stop a stale local process that still owns port `8000`:
 
 ```bash
-uv run poe stop
+hey stop
 ```
 
 This repo mounts the shared UI through the same FastAPI process, so the app opens directly at `/`.
@@ -54,13 +56,14 @@ VITE_API_BASE=http://127.0.0.1:8000 npm run dev -- --host 127.0.0.1 --port 3000
 
 ## Common Commands
 
-- `uv run poe new-agent`
-- `uv run poe embeddings-sync`
-- `uv run poe test`
-- `uv run poe format`
-- `uv run poe stop`
+- `hey create-agent`
+- `hey sync-embedding`
+- `hey test`
+- `hey format`
+- `hey stop`
 
 ## Notes
 
 - This repo intentionally keeps only workspace code and the bootstrap needed to run it.
+- The shared command surface lives in `agentfoundry` through the `hey` CLI; this repo only supplies local settings in `pyproject.toml`.
 - The earlier copied `scripts/` and server files were temporary compatibility scaffolding from the split and do not belong here.

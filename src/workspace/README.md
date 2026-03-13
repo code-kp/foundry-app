@@ -22,7 +22,7 @@ Use this file for contributor-facing authoring rules.
 Use the scaffold wizard when you want a working starter without hand-writing the files:
 
 ```bash
-uv run poe new-agent
+hey create-agent
 ```
 
 That command is deterministic. It does not call an LLM. It asks a few questions, then creates:

@@ -7,7 +7,6 @@ requires-python = ">=3.9"
 dependencies = [
   "agentfoundry @ git+https://github.com/code-kp/agentfoundry.git@main",
   "agentfoundry-ui @ git+https://github.com/code-kp/agentfoundry-ui.git@main",
-  "poethepoet>=0.32.0",
   "pytest>=8.3.5",
   "ruff>=0.6.0",
 ]
@@ -25,14 +24,17 @@ include = ["foundry_app*", "workspace*"]
 exclude = ["tests*"]
 namespaces = true
 
-[tool.poe.tasks]
-backend = "uvicorn foundry_app.app:app --app-dir src --reload --reload-dir src --reload-dir tests --reload-include '*.py' --reload-exclude '.venv/*' --reload-exclude '*/.venv/*' --reload-exclude 'venv/*' --reload-exclude '*/venv/*' --reload-exclude '*site-packages/*' --reload-exclude '__pycache__/*' --host 127.0.0.1 --port 8000"
-new-agent = "uv run foundry-new-agent --workspace-root src/workspace --workspace-package workspace"
-format = "ruff format ."
-test = "uv run python -m pytest tests/workspace"
-dev = "uv run poe backend"
-stop = "uv run python src/foundry_app/dev.py stop"
-embeddings-sync = "uv run foundry-sync-embeddings --workspace-root src/workspace --data-root ."
+[tool.agentfoundry]
+app = "foundry_app.app:app"
+app_dir = "src"
+workspace_root = "src/workspace"
+workspace_package = "workspace"
+data_root = "."
+host = "127.0.0.1"
+port = 8000
+reload_dirs = ["src", "tests"]
+test_paths = ["tests/workspace"]
+format_targets = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
